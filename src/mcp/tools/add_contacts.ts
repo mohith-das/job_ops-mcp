@@ -40,7 +40,8 @@ export const addContactsTool = defineTool({
     + 'are preserved (merge, not clobber). Only full_name is required; partial contacts are stored and the '
     + 'result reports per-contact what was missing/unresolved. You (the client) parse free-text/pasted info '
     + 'into these structured fields first.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     contacts: z.array(contactSchema).min(1).describe('1..N contact objects.'),
   },
   handler: async (args) => {

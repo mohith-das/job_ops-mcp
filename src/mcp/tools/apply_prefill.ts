@@ -90,7 +90,8 @@ export const applyPrefillTool = defineTool({
     'with tagline / cover-letter / summary text. Visa / work-auth fields are explicitly ' +
     'blocked. Returns a preview + screenshot + your rendered resume/cover URLs for you ' +
     'to download + upload manually. NEVER submits.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     job_id: z.string().min(1),
     url:    z.string().url().optional().describe('Override the job source_url (e.g. a different ATS apply URL).'),
   },

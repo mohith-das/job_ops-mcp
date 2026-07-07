@@ -57,7 +57,8 @@ export const findWarmIntrosTool = defineTool({
     `).all(...params, args.limit) as any[];
     return okResult({ count: rows.length, items: rows });
   },
-});
+mutates: false,
+  });
 
 // ── find_founders ────────────────────────────────────────────────────────────
 
@@ -85,7 +86,8 @@ export const findFoundersTool = defineTool({
     `).all(...params, args.limit) as any[];
     return okResult({ count: rows.length, items: rows });
   },
-});
+mutates: false,
+  });
 
 // ── draft_outreach ───────────────────────────────────────────────────────────
 
@@ -199,6 +201,8 @@ export const draftOutreachTool = defineTool({
       return errResult(`api draft_outreach failed: ${e?.message ?? String(e)}`);
     }
   },
+  mutates: true,
+ 
 });
 
 // ── get_outreach_queue ───────────────────────────────────────────────────────
@@ -228,7 +232,8 @@ export const getOutreachQueueTool = defineTool({
     `).all(...statuses, args.limit) as any[];
     return okResult({ count: rows.length, items: rows });
   },
-});
+mutates: false,
+  });
 
 // ── update_outreach ──────────────────────────────────────────────────────────
 
@@ -273,6 +278,8 @@ export const updateOutreachTool = defineTool({
     if (!result.ok) return errResult(result.message);
     return okResult({ id: args.id, from: result.from, to: result.to });
   },
+  mutates: true,
+ 
 });
 
 // ── get_followups_due ────────────────────────────────────────────────────────
@@ -292,7 +299,8 @@ export const getFollowupsDueTool = defineTool({
     `).all(args.limit) as any[];
     return okResult({ count: rows.length, items: rows });
   },
-});
+mutates: false,
+  });
 
 // ── draft_followup ───────────────────────────────────────────────────────────
 
@@ -373,6 +381,8 @@ export const draftFollowupTool = defineTool({
       return errResult(`api draft_followup failed: ${e?.message ?? String(e)}`);
     }
   },
+  mutates: true,
+ 
 });
 
 // ── draft_reply ──────────────────────────────────────────────────────────────
@@ -456,6 +466,8 @@ export const draftReplyTool = defineTool({
       return errResult(`api draft_reply failed: ${e?.message ?? String(e)}`);
     }
   },
+  mutates: true,
+ 
 });
 
 // ── helpers ──────────────────────────────────────────────────────────────────

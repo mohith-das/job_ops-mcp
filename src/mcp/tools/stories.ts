@@ -27,7 +27,8 @@ export const extractStoriesTool = defineTool({
   description:
     'Pulls STAR + Reflection rows out of the latest eval_report.block_interview for the job and inserts them into story_bank. ' +
     'Pass `stories` to skip parsing and append a hand-curated list instead.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     job_id:  z.string().min(1),
     stories: z.array(storyShape).optional(),
   },
@@ -127,7 +128,8 @@ export const getStoryBankTool = defineTool({
       })),
     });
   },
-});
+mutates: false,
+  });
 
 // ── negotiation_brief ────────────────────────────────────────────────────────
 
@@ -176,4 +178,6 @@ export const negotiationBriefTool = defineTool({
       tracker_url: trackerUrl(),
     });
   },
+  mutates: true,
+ 
 });

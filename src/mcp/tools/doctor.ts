@@ -26,4 +26,5 @@ export const doctorTool = defineTool({
     const report = await runDoctorChecks({ context: 'server', sampling });
     return okResult(report);
   },
-});
+mutates: false,
+  });

@@ -11,6 +11,14 @@
 //   - inputSchema is a `ZodRawShape` (object map of zod types), NOT a full ZodObject
 //   - handler returns `ToolResult` — okResult(payload) for success, errResult(msg) for failure
 //   - any tool that does writes must wrap the write in `runInWriteLock(...)`
+//
+// Safety metadata (added in 0.15.0):
+//   - `mutates: boolean` — REQUIRED on every tool. True iff the tool writes the DB /
+//     filesystem. The public MCP mount (/mcp/public) registers ONLY tools that are both
+//     non-mutating and opt-in `publicSafe` (see §5 of the portfolio plan; the guard at
+//     module load makes a public+mutating opt-in impossible to ship by mistake).
+//   - `publicSafe?: boolean` — opt-in. Default false. Setting it to true with a tool that
+//     mutates throws at module load.
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -28,6 +36,8 @@ export interface ToolDef<S extends z.ZodRawShape = z.ZodRawShape> {
   title:       string;
   description: string;
   inputSchema: S;
+  mutates:     boolean;
+  publicSafe?: boolean;
   // The optional second arg gives a tool access to MCP sampling / elicitation via the
   // ClientBridge. Tools that don't need it simply omit the parameter (back-compat). In
   // tests, call `tool.handler(args, { bridge: mockBridge })` directly.
@@ -35,6 +45,12 @@ export interface ToolDef<S extends z.ZodRawShape = z.ZodRawShape> {
 }
 
 export function defineTool<S extends z.ZodRawShape>(d: ToolDef<S>): ToolDef<S> {
+  if (d.publicSafe && d.mutates) {
+    throw new Error(
+      `defineTool: ${d.name ?? '<unnamed>'} is marked publicSafe but mutates=true. ` +
+        `A public-facing tool must never write — server.ts filters by mutates=false.`,
+    );
+  }
   return d;
 }
 

@@ -21,4 +21,5 @@ export const getReportTool = defineTool({
       created_at: row.created_at,
     });
   },
-});
+mutates: false,
+  });

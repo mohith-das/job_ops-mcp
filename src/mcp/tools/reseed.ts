@@ -17,7 +17,8 @@ export const reseedCareerPacketTool = defineTool({
     'rather than overwriting them — pass force:true to rebuild from cv.md anyway, or run ' +
     'sync_packet_to_cv first to write those edits back into cv.md. Identity comes from ' +
     'profile.yml; bullets / projects / skills / education come from cv.md.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     force: z.boolean().optional()
       .describe('Rebuild from cv.md even if the active packet has chat edits (DESTRUCTIVE to those edits). Default false = safe.'),
     confirm_empty_cv: z.boolean().optional()

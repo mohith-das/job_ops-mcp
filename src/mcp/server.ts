@@ -57,6 +57,7 @@ import { exportContactsTool, importContactsTool, deleteContactsTool } from './to
 
 // G5 — stories + negotiation
 import { extractStoriesTool, getStoryBankTool, negotiationBriefTool } from './tools/stories.js';
+import { getStoryBankPublicTool } from './tools/stories_public.js';
 
 // G6 — batch + materials
 import { batchEvaluateTool   } from './tools/batch_evaluate.js';
@@ -93,7 +94,7 @@ const FULL_TOOLSET: AnyToolDef[] = [
   updateOutreachTool, getFollowupsDueTool, draftFollowupTool, draftReplyTool,
   visaSignalTool, importH1bTool, importLinkedinTool,
   addContactsTool, exportContactsTool, importContactsTool, deleteContactsTool,
-  extractStoriesTool, getStoryBankTool, negotiationBriefTool,
+  extractStoriesTool, getStoryBankTool, negotiationBriefTool, getStoryBankPublicTool,
   batchEvaluateTool, generateMaterialsTool,
   evaluateTrainingTool, evaluateProjectTool, deepResearchTool, dailyDigestTool,
   getCareerPacketTool, updateCareerPacketTool, reseedCareerPacketTool, syncPacketToCvTool,
@@ -115,11 +116,25 @@ function pkgVersion(): string {
 }
 const PKG_VERSION = pkgVersion();
 
+// The public-facing MCP surface (mounted at /mcp/public) exposes EXACTLY the
+// tools that opt-in to `publicSafe`. Per the closed-surface policy (§5), every
+// other jobops tool leaks operator-only data — active pipeline, negotiation
+// posture, visa, contacts/PII, or server internals — and is intentionally
+// unreachable from anonymous recruiter clients.
+//
+// `PUBLIC_TOOLS` is derived from ALL_TOOLS at module load (after the visa
+// toggle) so flipping the visa flag automatically updates the public surface.
+const PUBLIC_TOOLS: AnyToolDef[] = ALL_TOOLS.filter((t) => t.publicSafe === true);
+
+export function getPublicTools(): ReadonlyArray<AnyToolDef> {
+  return PUBLIC_TOOLS;
+}
+
 // Tools and resources are static, but each protocol instance must be fresh — see the
 // multi-client note in the header. Registration is microseconds; correctness first.
-function buildMcpServer(): McpServer {
+function buildMcpServer(tools: AnyToolDef[] = ALL_TOOLS): McpServer {
   const server = new McpServer({ name: 'jobops', version: PKG_VERSION });
-  registerTools(server, ALL_TOOLS);
+  registerTools(server, tools);
   for (const r of listResources()) {
     server.registerResource(
       r.name, r.uri,
@@ -147,12 +162,14 @@ function recordRequestForStatus(req: Request): void {
   }
 }
 
-export function mountMcp(app: Express, path = '/mcp'): void {
+export function mountMcp(app: Express, path = '/mcp', tools: AnyToolDef[] = ALL_TOOLS): void {
   const handle = async (req: Request, res: Response) => {
     recordRequestForStatus(req);
     // Fresh server + transport per request — complete isolation between
     // concurrent clients (one shared instance would cross-route responses).
-    const server = buildMcpServer();
+    // The `tools` argument lets callers (e.g. the public mount in src/server.ts)
+    // register a strictly narrower surface.
+    const server = buildMcpServer(tools);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

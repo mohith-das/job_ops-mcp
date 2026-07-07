@@ -66,7 +66,8 @@ export const updateProfileTool = defineTool({
     'Capture or update your identity fields and per-archetype taglines, then reseed the career ' +
     'packet — no manual YAML edit. Uses MCP elicitation (form mode) when the client supports it; ' +
     'otherwise pass `fields` directly, or edit config/profile.yml by hand (the file path still works).',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     fields: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional()
       .describe('Programmatic path: flat values (full_name, email, …, tagline_1_archetype, tagline_1_text, …). ' +
                 'When omitted and the client supports elicitation, the server requests a form instead.'),

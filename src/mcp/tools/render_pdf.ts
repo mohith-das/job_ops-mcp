@@ -56,7 +56,8 @@ export const renderPdfTool = defineTool({
     'for Word / Google Docs editing. All formats share the same tailored content. ' +
     'URLs are persisted onto the application row; the visa-leakage rail applies to ' +
     'every output. Defaults to formats=["pdf"] for back-compat.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     job_id:      z.string().min(1),
     kind:        z.enum(['resume', 'cover', 'both']).default('resume'),
     formats:     z.array(z.enum(['pdf','tex','docx'])).default(['pdf'])

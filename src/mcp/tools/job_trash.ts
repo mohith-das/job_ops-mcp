@@ -15,7 +15,8 @@ export const deleteJobsTool = defineTool({
     + 'and/or by `statuses` (e.g. trash all "skip"/"discard"/"sourced"). Trashed jobs drop out of the '
     + 'tracker, get_top_jobs, and batch rating but are retained and restorable. Echoes exactly which jobs '
     + '(title + company) were trashed so a wrong selection is catchable. Hard deletion is only via purge_jobs.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     job_ids:  z.array(z.string().min(1)).optional(),
     statuses: z.array(z.enum(JOB_STATUSES)).optional().describe('Trash every (non-trashed) job in these statuses.'),
   },
@@ -40,6 +41,8 @@ export const restoreJobsTool = defineTool({
     const r = await restoreJobs(args.job_ids);
     return okResult({ restored: r.restored, results: r.results });
   },
+  mutates: true,
+ 
 });
 
 export const listTrashedTool = defineTool({
@@ -51,7 +54,8 @@ export const listTrashedTool = defineTool({
     const items = listTrashedJobs();
     return okResult({ count: items.length, items });
   },
-});
+mutates: false,
+  });
 
 export const purgeJobsTool = defineTool({
   name: 'purge_jobs',
@@ -83,4 +87,6 @@ export const purgeJobsTool = defineTool({
     return okResult({ purged: r.purged, backup_path: r.backup_path, results: r.results,
       note: `Permanently deleted ${r.purged} trashed job(s). Backup: ${r.backup_path ?? '(none — nothing matched a trashed job)'}` });
   },
+  mutates: true,
+ 
 });

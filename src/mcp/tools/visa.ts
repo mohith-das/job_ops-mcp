@@ -57,7 +57,8 @@ export const visaSignalTool = defineTool({
       note: 'INTERNAL ONLY — never surface in a resume, cover letter, or outreach.',
     });
   },
-});
+mutates: false,
+  });
 
 // ── import_linkedin ──────────────────────────────────────────────────────────
 
@@ -170,6 +171,8 @@ export const importLinkedinTool = defineTool({
     });
     return okResult({ file, rows_in_csv: rows.length, ...summary });
   },
+  mutates: true,
+ 
 });
 
 // ── import_h1b ───────────────────────────────────────────────────────────────
@@ -183,6 +186,7 @@ export const importH1bTool = defineTool({
   description:
     'Bulk-loads h1b_filings from a DOL OFLC LCA disclosure CSV (download the quarterly file from foreignlaborcert.doleta.gov/performancedata.cfm). ' +
     'Maps employer_name to companies via name_normalized; unmatched names are kept as employer_name_raw only.',
+  mutates: true,
   inputSchema: {
     path:        z.string().min(1),
     fiscal_year: z.number().int().min(2010).max(2099).optional()

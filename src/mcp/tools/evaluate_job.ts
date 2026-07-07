@@ -51,7 +51,8 @@ export const evaluateJobTool = defineTool({
     'Two-step JD evaluator. Step 1: pass `input` (URL or pasted JD) to get rubric + normalized JD. ' +
     'Step 2: pass `job_id` + `report` + `scores` to persist the 6-block report and return its localhost link. ' +
     'mode="api" runs both steps server-side via the configured LLM.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     input:    z.string().min(1).optional()
                 .describe('A URL OR pasted JD text. Required on step 1.'),
     job_id:   z.string().optional()

@@ -22,7 +22,8 @@ export const batchEvaluateTool = defineTool({
     'Prefers MCP sampling (your connected client\'s model — no API key needed); falls back to a ' +
     'BYO LLM key (Gemini/DeepSeek) when the client does not support sampling. Returns an A-F tier ' +
     'distribution and any parse-error count. Never produces silent zeros.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     role_category: z.enum(ROLE_CATEGORIES).optional(),
     company:       z.string().optional().describe('Substring match on company name.'),
     limit:         z.number().int().min(1).max(500).default(50),

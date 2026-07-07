@@ -53,7 +53,14 @@ export function buildHttpApp(): Express {
     const guard = bearerAuthMiddleware(config.authPolicy.token, resourceMetadataUrl);
     app.use((req: Request, res: Response, next) => {
       // Allow-list the always-open routes; everything else needs the token.
-      if (req.path === '/healthz' || req.path === '/.well-known/oauth-protected-resource') {
+      // /mcp/public is the anonymous recruiter-side surface; its toolset is
+      // narrow (get_career_packet + get_story_bank_public) and server-registered
+      // to be non-mutating, so leaving it open is safe.
+      if (
+        req.path === '/healthz' ||
+        req.path === '/.well-known/oauth-protected-resource' ||
+        req.path === '/mcp/public'
+      ) {
         return next();
       }
       return guard(req, res, next);

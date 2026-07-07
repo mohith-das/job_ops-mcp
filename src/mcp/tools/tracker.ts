@@ -63,7 +63,8 @@ export const getTopJobsTool = defineTool({
     });
     return okResult({ count: items.length, min_score: args.min_score, items });
   },
-});
+mutates: false,
+  });
 
 // ── get_tracker ──────────────────────────────────────────────────────────────
 
@@ -108,7 +109,8 @@ export const getTrackerTool = defineTool({
       items: r.items,
     });
   },
-});
+mutates: false,
+  });
 
 // ── update_status ────────────────────────────────────────────────────────────
 
@@ -126,6 +128,8 @@ export const updateStatusTool = defineTool({
     if (!result.ok) return errResult(result.message);
     return okResult({ job_id: args.job_id, from: result.from, to: result.to });
   },
+  mutates: true,
+ 
 });
 
 // ── mark_ready_to_apply ──────────────────────────────────────────────────────
@@ -158,5 +162,7 @@ export const markReadyToApplyTool = defineTool({
     });
     return okResult({ updated_count: summary.updated.length, ...summary });
   },
+  mutates: true,
+ 
 });
 

@@ -10,7 +10,8 @@ export const scanPortalsTool = defineTool({
     'Fan out across configured ATS endpoints. Greenhouse / Ashby / Lever / Workday hit JSON APIs; ' +
     'Google + custom playwright_generic use Chromium. Content-hash dedupes across sources. ' +
     'Reads tracked_companies from portals.yml in the project root.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     sources:   z.array(z.string()).optional().describe(`Restrict to a subset of providers. Known: ${knownProviderIds().join(', ')}.`),
     companies: z.array(z.string()).optional().describe('Restrict to companies whose name contains any of these substrings.'),
     title_positive: z.array(z.string()).optional(),

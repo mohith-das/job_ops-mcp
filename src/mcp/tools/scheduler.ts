@@ -11,7 +11,8 @@ export const schedulerStatusTool = defineTool({
   description: 'Returns currently enabled scheduler jobs, available jobs + intervals, and last fire time.',
   inputSchema: {},
   handler: async () => okResult(status()),
-});
+mutates: false,
+  });
 
 export const schedulerEnableTool = defineTool({
   name: 'scheduler_enable',
@@ -22,6 +23,8 @@ export const schedulerEnableTool = defineTool({
     const enabled = await setEnabledJobs(args.jobs);
     return okResult({ enabled, status: status() });
   },
+  mutates: true,
+ 
 });
 
 export const schedulerDisableTool = defineTool({
@@ -33,4 +36,6 @@ export const schedulerDisableTool = defineTool({
     disableAll();
     return okResult({ enabled: [], status: status() });
   },
+  mutates: true,
+ 
 });

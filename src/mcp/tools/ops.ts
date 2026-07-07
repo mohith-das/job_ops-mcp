@@ -21,7 +21,8 @@ export const evaluateTrainingTool = defineTool({
   description:
     'Scores a training input (URL, syllabus, or pasted text) against the candidate profile. ' +
     'chat-mode default returns the rubric + packet for the chat to score. api-mode runs the LLM.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     input: z.string().min(1).describe('URL, syllabus text, or paste of training description.'),
     mode:  z.enum(['chat','api']).default('chat'),
   },
@@ -83,6 +84,8 @@ export const evaluateProjectTool = defineTool({
     if (!call.parseOk) return errResult(`parse error: ${call.parseError}`);
     return okResult(call.parsed as object);
   },
+  mutates: true,
+ 
 });
 
 // ── deep_research ────────────────────────────────────────────────────────────
@@ -164,6 +167,8 @@ export const deepResearchTool = defineTool({
       ) : 'Persisted enrichment for the requested kind(s) if api+notes were provided.',
     });
   },
+  mutates: true,
+ 
 });
 
 // ── daily_digest ─────────────────────────────────────────────────────────────
@@ -229,6 +234,8 @@ export const dailyDigestTool = defineTool({
       tracker_url: trackerUrl(),
     });
   },
+  mutates: true,
+ 
 });
 
 // ── get_career_packet ────────────────────────────────────────────────────────
@@ -243,6 +250,9 @@ export const getCareerPacketTool = defineTool({
     if (!row) return errResult('No active career packet (server should seed on first run).');
     return okResult(row);
   },
+  mutates: false,
+  publicSafe: true,
+ 
 });
 
 // ── update_career_packet ─────────────────────────────────────────────────────
@@ -258,6 +268,7 @@ export const updateCareerPacketTool = defineTool({
     '(e.g. "2" for taglines, "6" for projects) + `section_content` (just that section\'s new body), ' +
     'so "change my tagline" or "remove project X" need not re-send the whole packet. ' +
     'To bring cv.md up to date FROM these edits, use sync_packet_to_cv.',
+  mutates: true,
   inputSchema: {
     content:         z.string().min(50).optional().describe('Full markdown content of the new packet (full-replace mode).'),
     section:         z.string().optional().describe('Section number to edit, e.g. "2" (taglines) or "6" (projects). Use with section_content.'),
@@ -314,6 +325,7 @@ export const enrichCompanyTool = defineTool({
   name: 'enrich_company',
   title: 'Refresh enrichment row for a company',
   description: 'Stores a chat- or api-provided enrichment summary for (company, kind) with a 30-day TTL.',
+  mutates: true,
   inputSchema: {
     company: z.string().min(1),
     kind:    z.enum(['comp','culture','recent_news']),
@@ -352,6 +364,7 @@ export const costEstimateTool = defineTool({
   name: 'cost_estimate',
   title: 'LLM cost estimate',
   description: 'Aggregates llm_calls by provider+model+tool over a window and estimates USD cost. Defaults: last 30 days.',
+  mutates: false,
   inputSchema: {
     days: z.number().int().min(1).max(365).default(30),
   },

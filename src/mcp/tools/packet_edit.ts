@@ -21,7 +21,8 @@ export const editPacketItemTool = defineTool({
     + 'whole packet. `section` is a number ("3"–"8") or a name (taglines, projects, skills, education); '
     + 'experience spans 3/4/5 — address by number. Versions the packet (history kept) and runs the '
     + 'visa-leakage scan on the new text. For whole-document edits use update_career_packet.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     section:  z.string().min(1),
     item:     itemArg,
     new_text: z.string().min(1).describe('Replacement text for the item (no leading "- ").'),
@@ -65,6 +66,8 @@ export const removePacketItemTool = defineTool({
       return errResult(e?.message ?? String(e));
     }
   },
+  mutates: true,
+ 
 });
 
 export const restorePacketVersionTool = defineTool({
@@ -89,4 +92,6 @@ export const restorePacketVersionTool = defineTool({
       return errResult(e?.message ?? String(e));
     }
   },
+  mutates: true,
+ 
 });

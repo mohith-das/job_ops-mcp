@@ -9,7 +9,7 @@
 //
 // In stdio mode all logging MUST go to stderr — stdout is the MCP channel.
 import { buildHttpApp } from './http/app.js';
-import { mountMcp, serveStdio } from './mcp/server.js';
+import { mountMcp, serveStdio, getPublicTools } from './mcp/server.js';
 import { config } from './config.js';
 import { getDb } from './db.js';
 import { ensureActiveCareerPacket, loadProjectFiles } from './core/profile.js';
@@ -61,7 +61,14 @@ export async function bootServer(opts: BootOptions = {}): Promise<void> {
   // The Express server still runs so /files/* artifact links resolve.
   setTransportMode(opts.stdio ? 'stdio' : 'http');
   if (!opts.stdio) {
+    // Authenticated, full surface.
     mountMcp(app, '/mcp');
+    // Open, read-only curated surface for external recruiter-side AI agents
+    // (Claude.ai connectors, ChatGPT MCP, etc.) — allow-listed in the bearer
+    // middleware in src/http/app.ts. Tools are server-side registered; no
+    // client-side filter can make a mutating tool unreachable, so the mount
+    // takes a strictly narrower toolset (deriveTools → PUBLIC_TOOLS).
+    mountMcp(app, '/mcp/public', [...getPublicTools()]);
   }
   applySchedulerState();
   const enabled = readEnabledJobs();

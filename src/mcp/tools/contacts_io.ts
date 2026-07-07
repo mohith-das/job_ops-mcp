@@ -15,7 +15,8 @@ export const exportContactsTool = defineTool({
     'Writes ALL contacts (every field — classification flags, notes, email, resolved company, ids, '
     + 'archived state) to timestamped CSV and JSON files in the project root. The backup / portability '
     + 'path: re-importing the JSON reproduces the same DB with zero loss and zero duplicates.',
-  inputSchema: {},
+    mutates: true,
+inputSchema: {},
   handler: async () => {
     const r = exportContacts();
     return okResult({ ...r, note: `Exported ${r.count} contact(s). Re-import with import_contacts to restore/merge (non-destructive).` });
@@ -51,6 +52,8 @@ export const importContactsTool = defineTool({
       return errResult(`import_contacts failed: ${e?.message ?? String(e)}`);
     }
   },
+  mutates: true,
+ 
 });
 
 const identifierSchema = z.object({
@@ -85,4 +88,6 @@ export const deleteContactsTool = defineTool({
           + `Backup written to ${r.backup_path}. Review results[].matched to confirm the right rows were removed.`,
     });
   },
+  mutates: true,
+ 
 });

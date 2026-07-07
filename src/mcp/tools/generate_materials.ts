@@ -32,7 +32,8 @@ export const generateMaterialsTool = defineTool({
     'Picks bullets / tagline / cover from the active career_packet per the JD via tailoring_rules. ' +
     'chat-mode default returns context for the chat to draft. api-mode calls the LLM, validates against ' +
     'the visa rail, and writes tailored_bullets + cover_letter_draft to the application row.',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     job_id:    z.string().min(1),
     mode:      z.enum(['chat','api']).default('chat'),
     materials: materialsShape.optional()

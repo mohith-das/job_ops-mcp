@@ -22,7 +22,8 @@ export const syncPacketToCvTool = defineTool({
     'Non-destructive to the packet (only writes the source files). Optionally pass then_reseed:true to ' +
     'immediately rebuild a reseed-origin packet from the freshly-synced cv.md (makes the packet and ' +
     'source files consistent and clears the chat-edited flag).',
-  inputSchema: {
+    mutates: true,
+inputSchema: {
     then_reseed: z.boolean().optional()
       .describe('After writing the source files, force-reseed so the active packet is rebuilt from the synced cv.md (origin becomes reseed). Default false — leaves your chat-edited packet active.'),
   },

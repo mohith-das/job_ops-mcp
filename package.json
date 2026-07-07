@@ -1,6 +1,6 @@
 {
   "name": "@mohith_das/jobops",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Self-hosted MCP server for the full job-search loop: portal scanning, JD evaluation, tailored resume + cover PDFs, outreach drafting, story bank, negotiation brief — chat-driven, human-in-the-loop.",
   "type": "module",
   "private": false,
