@@ -5,6 +5,17 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveAuthPolicy, type AuthPolicy } from './core/auth.js';
 import { applyLegacyEnvAliases } from './core/legacy_env.js';
+import { loadDotEnvIntoProcessEnv } from './core/env_loader.js';
+
+// Load .env from project root BEFORE any env-var reading. Shell exports win over
+// .env file values (loadDotEnvIntoProcessEnv only sets keys not already in process.env).
+// This must run before legacy aliasing so .env values take precedence over MCP_JSA_* vars.
+const _earlyProjectRoot = process.env.JOBOPS_PROJECT_ROOT
+  ? (isAbsolute(process.env.JOBOPS_PROJECT_ROOT)
+      ? process.env.JOBOPS_PROJECT_ROOT
+      : resolve(process.cwd(), process.env.JOBOPS_PROJECT_ROOT))
+  : process.cwd();
+loadDotEnvIntoProcessEnv(_earlyProjectRoot);
 
 // Map any still-set legacy MCP_JSA_* env vars onto their JOBOPS_* names BEFORE any
 // read below. Keeps pre-rename configs working (with a deprecation warning).
@@ -122,7 +133,42 @@ export interface AppConfig {
    * when the client doesn't advertise sampling. Set JOBOPS_SAMPLING=false to force
    * the BYO-key path even when sampling is available.
    */
-  samplingEnabled: boolean;
+   samplingEnabled: boolean;
+  /**
+   * LivingCV Master Relay base URL for career packet sync.
+   * Default: http://127.0.0.1:7890 (local LivingCV instance).
+   */
+  livingcvBaseUrl: string;
+  /**
+   * Bearer token for LivingCV Master Relay authentication.
+   * Null when unset — sync_to_livingcv will error with instructions to set it.
+   */
+  livingcvToken: string | null;
+  /**
+   * HireBridge central router base URL for signal broadcast.
+   * Default: https://api.hirebridge.io
+   */
+  hirebridgeBaseUrl: string;
+  /**
+   * Bearer token for HireBridge authentication (set by connect_to_hirebridge).
+   * Null when unset — broadcast_signal will error with instructions to connect.
+   */
+  hirebridgeToken: string | null;
+  /**
+   * Email associated with the HireBridge connection.
+   * Set by connect_to_hirebridge alongside the token.
+   */
+  hirebridgeEmail: string | null;
+  /**
+   * Embedding provider for edge vector generation.
+   * Options: 'local' (all-MiniLM-L6-v2 via @xenova/transformers), 'openai', 'voyage', 'none'.
+   * Default: 'local'
+   */
+  embeddingProvider: string;
+  /**
+   * Embedding model name. Default: 'all-MiniLM-L6-v2' for local provider.
+   */
+  embeddingModel: string;
 }
 
 export function loadConfig(): AppConfig {
@@ -194,6 +240,13 @@ export function loadConfig(): AppConfig {
     authToken,
     authPolicy,
     samplingEnabled:    envBool('JOBOPS_SAMPLING', true),
+    livingcvBaseUrl:    (process.env.JOBOPS_LIVINGCV_URL || 'http://127.0.0.1:7890').trim(),
+    livingcvToken:      (process.env.JOBOPS_LIVINGCV_TOKEN ?? '').trim() || null,
+    hirebridgeBaseUrl:  (process.env.JOBOPS_HIREBRIDGE_URL || 'https://api.hirebridge.io').trim(),
+    hirebridgeToken:    (process.env.JOBOPS_HIREBRIDGE_TOKEN ?? '').trim() || null,
+    hirebridgeEmail:    (process.env.JOBOPS_HIREBRIDGE_EMAIL ?? '').trim() || null,
+    embeddingProvider:  (process.env.JOBOPS_EMBEDDING_PROVIDER || 'local').trim(),
+    embeddingModel:     (process.env.JOBOPS_EMBEDDING_MODEL || 'all-MiniLM-L6-v2').trim(),
   };
 }
 

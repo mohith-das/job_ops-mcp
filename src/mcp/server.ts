@@ -80,6 +80,13 @@ import { applyPrefillTool } from './tools/apply_prefill.js';
 // G9 — scheduler
 import { schedulerStatusTool, schedulerEnableTool, schedulerDisableTool } from './tools/scheduler.js';
 
+// G10 — federation (career-packet.json, LivingCV sync, embeddings, HireBridge)
+import { compileCareerPacketTool, getCareerPacketJsonTool } from './tools/career_packet_json.js';
+import { generateEmbeddingsTool, getEmbeddingsTool } from './tools/embeddings.js';
+import { syncToLivingCVTool } from './tools/sync_to_livingcv.js';
+import { broadcastSignalTool, getFederationStatusTool } from './tools/signal_broadcast.js';
+import { updateJobopsTool } from './tools/update_jobops.js';
+
 // Tools tagged "visa" are hidden from tools/list when JOBOPS_VISA_SCORING=false.
 const VISA_TOOL_NAMES: ReadonlySet<string> = new Set([
   'visa_signal', 'import_h1b', 'import_linkedin',
@@ -103,6 +110,11 @@ const FULL_TOOLSET: AnyToolDef[] = [
   doctorTool,
   applyPrefillTool,
   schedulerStatusTool, schedulerEnableTool, schedulerDisableTool,
+  compileCareerPacketTool, getCareerPacketJsonTool,
+  generateEmbeddingsTool, getEmbeddingsTool,
+  syncToLivingCVTool,
+  broadcastSignalTool, getFederationStatusTool,
+  updateJobopsTool,
 ];
 
 const ALL_TOOLS: AnyToolDef[] = config.visaScoringEnabled

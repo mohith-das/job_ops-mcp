@@ -573,6 +573,229 @@ async function cmdReseed(flags: Map<string, string | boolean>) {
   console.log('');
 }
 
+// ── compile-packet ──────────────────────────────────────────────────────────
+
+async function cmdCompilePacket(flags: Map<string, string | boolean>) {
+  if (!process.env.JOBOPS_PROJECT_ROOT) process.env.JOBOPS_PROJECT_ROOT = process.cwd();
+  console.log(c.bold('\njobops compile-packet\n'));
+  console.log(c.dim('Compiles cv.md + profile.yml + story_bank into a canonical career-packet.json'));
+  console.log(c.dim('(JSON Resume superset with Lightcast Open Skills IDs and evidence claims).\n'));
+
+  const lightcastMode = flags.get('skip-lightcast') ? 'skip' : 'llm';
+  if (lightcastMode === 'skip') {
+    console.log(c.dim('  Lightcast mapping: skipped (--skip-lightcast flag)\n'));
+  } else {
+    console.log(c.dim('  Lightcast mapping: enabled (using configured LLM)\n'));
+  }
+
+  try {
+    const { compileCareerPacketJson } = await import('./core/career_packet_json.js');
+    const result = await compileCareerPacketJson({ lightcastMode });
+
+    const skillsCount = result.content.skills.reduce((sum, cat) => sum + cat.items.length, 0);
+    const evidenceCount = result.content.evidence.length;
+    const workCount = result.content.work.length;
+    const projectsCount = result.content.projects.length;
+
+    console.log(`  ${tick()} career_packet_json → version ${c.bold(`v${result.version}`)}`);
+    console.log(`  ${tick()} content hash: ${c.dim(result.content_hash.slice(0, 16))}...`);
+    console.log(`  ${tick()} Lightcast mapped: ${result.content.meta.lightcast_mapped ? c.green('yes') : c.dim('no')}`);
+    console.log(`  ${tick()} file: ${c.bold(result.file_path)}`);
+    console.log('');
+    console.log(`  Stats:`);
+    console.log(`    · ${workCount} work experiences`);
+    console.log(`    · ${projectsCount} projects`);
+    console.log(`    · ${skillsCount} skills`);
+    console.log(`    · ${evidenceCount} evidence claims (from story_bank)`);
+    console.log('');
+    console.log(c.dim('  Next: run `jobops sync` to push to LivingCV, or use the sync_to_livingcv MCP tool.'));
+    console.log('');
+  } catch (e: any) {
+    console.error(`  ${cross()} Failed to compile career packet: ${e?.message ?? e}`);
+    process.exit(1);
+  }
+}
+
+// ── sync ────────────────────────────────────────────────────────────────────
+
+async function cmdSync(flags: Map<string, string | boolean>) {
+  if (!process.env.JOBOPS_PROJECT_ROOT) process.env.JOBOPS_PROJECT_ROOT = process.cwd();
+  console.log(c.bold('\njobops sync\n'));
+  console.log(c.dim('Syncs the compiled career-packet.json to your LivingCV instance.\n'));
+
+  const force = !!flags.get('force');
+  if (force) {
+    console.log(c.dim('  Force sync enabled (will sync even if content unchanged).\n'));
+  }
+
+  try {
+    const { getDb } = await import('./db.js');
+    const { syncToLivingCV } = await import('./core/livingcv_client.js');
+
+    // Check for active career_packet_json
+    const packetRow = getDb()
+      .prepare(`SELECT content FROM career_packet_json WHERE is_active = 1`)
+      .get() as any;
+
+    if (!packetRow) {
+      console.error(`  ${cross()} No compiled career packet found.`);
+      console.error(`  ${c.dim('Run')} ${c.bold('jobops compile-packet')} ${c.dim('first to compile cv.md + profile.yml + story_bank.')}`);
+      process.exit(1);
+    }
+
+    const packet = JSON.parse(packetRow.content);
+    console.log(c.dim(`  Compiling sync for packet v${packet.meta.version}...`));
+
+    const result = await syncToLivingCV(packet, force);
+
+    if (result.ok) {
+      console.log(`  ${tick()} ${c.green('Synced to LivingCV')}`);
+      console.log(`  ${tick()} URL: ${c.bold(result.livingcv_url)}`);
+      console.log(`  ${tick()} Packet version: ${c.bold(`v${result.packet_version}`)}`);
+      console.log(`  ${tick()} Content hash: ${c.dim(result.content_hash.slice(0, 16))}...`);
+      console.log('');
+      console.log(c.dim('  Next: run `jobops broadcast` to push signal to HireBridge (after connecting).'));
+      console.log('');
+    } else {
+      console.error(`  ${cross()} ${c.red('Sync failed')}`);
+      console.error(`  ${c.dim('Error:')} ${result.error}`);
+      if (result.fix) {
+        console.error(`  ${c.dim('Fix:')} ${result.fix}`);
+      }
+      process.exit(1);
+    }
+  } catch (e: any) {
+    console.error(`  ${cross()} Failed to sync: ${e?.message ?? e}`);
+    process.exit(1);
+  }
+}
+
+// ── connect_to_hirebridge ───────────────────────────────────────────────────
+
+async function cmdConnectToHireBridge(flags: Map<string, string | boolean>) {
+  if (!process.env.JOBOPS_PROJECT_ROOT) process.env.JOBOPS_PROJECT_ROOT = process.cwd();
+  console.log(c.bold('\njobops connect_to_hirebridge\n'));
+  console.log(c.dim('Authenticate with HireBridge via magic link.\n'));
+
+  try {
+    const { initiateDeviceAuth, pollForToken, writeHireBridgeTokenToEnv, updateFederationState } = await import('./core/hirebridge_client.js');
+    const { createInterface } = await import('node:readline/promises');
+    const { stdin, stdout } = await import('node:process');
+
+    // Get email from flag or prompt
+    let email = typeof flags.get('email') === 'string' ? String(flags.get('email')) : '';
+    if (!email) {
+      const rl = createInterface({ input: stdin, output: stdout });
+      email = await rl.question('Enter your email: ');
+      rl.close();
+    }
+
+    if (!email || !email.includes('@')) {
+      console.error(`  ${cross()} Invalid email address.`);
+      process.exit(1);
+    }
+
+    console.log(`\n  ${c.dim('Sending magic link to')} ${c.bold(email)}...`);
+
+    // Initiate device auth
+    const deviceAuth = await initiateDeviceAuth(email);
+
+    console.log(`  ${c.dim('Magic link sent. Check your email.')}`);
+    console.log(`  ${c.dim('Verification URI:')} ${c.bold(deviceAuth.verification_uri)}`);
+    console.log(`  ${c.dim('User code:')} ${c.bold(deviceAuth.user_code)}`);
+    console.log(`\n  ${c.dim('Waiting for approval...')} ${c.dim(`(expires in ${deviceAuth.expires_in}s)`)}\n`);
+
+    // Poll for token
+    const tokenResponse = await pollForToken(
+      deviceAuth.device_code,
+      deviceAuth.interval,
+      deviceAuth.expires_in,
+    );
+
+    // Write to .env
+    writeHireBridgeTokenToEnv(tokenResponse.access_token, tokenResponse.email, process.env.JOBOPS_PROJECT_ROOT!);
+
+    // Update federation state
+    await updateFederationState(tokenResponse.email);
+
+    console.log(`  ${tick()} ${c.green('Connected to HireBridge as')} ${c.bold(tokenResponse.email)}`);
+    console.log(`  ${tick()} Token saved to .env (JOBOPS_HIREBRIDGE_TOKEN)`);
+    console.log('');
+    console.log(c.dim('  Next: run `jobops broadcast` to push signal to HireBridge.'));
+    console.log('');
+  } catch (e: any) {
+    console.error(`  ${cross()} ${c.red('Authentication failed')}`);
+    console.error(`  ${c.dim('Error:')} ${e?.message ?? e}`);
+    process.exit(1);
+  }
+}
+
+// ── broadcast ───────────────────────────────────────────────────────────────
+
+async function cmdBroadcast(flags: Map<string, string | boolean>) {
+  if (!process.env.JOBOPS_PROJECT_ROOT) process.env.JOBOPS_PROJECT_ROOT = process.cwd();
+  console.log(c.bold('\njobops broadcast\n'));
+  console.log(c.dim('Broadcasts a signed signal snapshot (embeddings + capabilities) to HireBridge.\n'));
+
+  try {
+    const { broadcastSignal } = await import('./core/signal_broadcast.js');
+
+    console.log(c.dim('  Compiling signal snapshot...'));
+
+    const result = await broadcastSignal();
+
+    if (result.ok) {
+      console.log(`  ${tick()} ${c.green('Signal broadcast to HireBridge')}`);
+      console.log(`  ${tick()} Snapshot hash: ${c.dim(result.snapshot_hash.slice(0, 16))}...`);
+      console.log('');
+      console.log(c.dim('  Your signal is now visible to the HireBridge router for opportunity matching.'));
+      console.log('');
+    } else {
+      console.error(`  ${cross()} ${c.red('Broadcast failed')}`);
+      console.error(`  ${c.dim('Error:')} ${result.error}`);
+      if (result.fix) {
+        console.error(`  ${c.dim('Fix:')} ${result.fix}`);
+      }
+      process.exit(1);
+    }
+  } catch (e: any) {
+    console.error(`  ${cross()} Failed to broadcast: ${e?.message ?? e}`);
+    process.exit(1);
+  }
+}
+
+// ── update ──────────────────────────────────────────────────────────────────
+
+async function cmdUpdate(flags: Map<string, string | boolean>) {
+  console.log(c.bold('\njobops update\n'));
+  console.log(c.dim('Checking npm registry for updates...\n'));
+
+  try {
+    const { checkForUpdate } = await import('./core/updater.js');
+    const result = await checkForUpdate();
+
+    if (result.updateAvailable) {
+      console.log(`  ${warn()} ${c.yellow('Update available')}`);
+      console.log(`  ${c.dim('Current:')} v${result.current}`);
+      console.log(`  ${c.dim('Latest:')}  v${result.latest}`);
+      console.log('');
+      console.log(`  ${c.bold('Run:')} ${c.green(result.updateCommand)}`);
+      if (result.releaseNotes) {
+        console.log('');
+        console.log(c.dim('  Release notes:'));
+        console.log(c.dim(result.releaseNotes.slice(0, 500)));
+      }
+      console.log('');
+    } else {
+      console.log(`  ${tick()} ${c.green('jobops is up to date')} (v${result.current})`);
+      console.log('');
+    }
+  } catch (e: any) {
+    console.error(`  ${cross()} Failed to check for updates: ${e?.message ?? e}`);
+    process.exit(1);
+  }
+}
+
 // ── help ────────────────────────────────────────────────────────────────────
 
 function cmdHelp() {
@@ -590,6 +813,18 @@ COMMANDS
                     HTTP file server still runs on the port so /files/* links work.
   reseed            Rebuild the active career_packet from the current cv.md +
                     config/profile.yml. Run this after editing cv.md.
+  compile-packet    Compile cv.md + profile.yml + story_bank into a canonical
+                    career-packet.json (JSON Resume superset with Lightcast IDs).
+                    Flags: --skip-lightcast (skip skill ID mapping).
+  sync              Sync the compiled career-packet.json to your LivingCV instance.
+                    Flags: --force (sync even if content unchanged).
+  connect_to_hirebridge
+                    Authenticate with HireBridge via magic link. Prompts for email,
+                    sends magic link, waits for approval, saves token to .env.
+  broadcast         Broadcast signal snapshot (embeddings + capabilities) to HireBridge.
+                    Requires: compile-packet, generate_embeddings, connect_to_hirebridge.
+  update            Check npm registry for jobops updates. Reports the update command
+                    if a newer version is available. Does NOT auto-update.
   templates         List available resume/cover themes (bundled + user dir).
   doctor            Diagnose Node version, Chromium, config files, LLM key.
   connect           Print copy-paste config for EVERY client (Claude Desktop, Claude
@@ -620,6 +855,13 @@ LEARN MORE
 // ── main ────────────────────────────────────────────────────────────────────
 
 async function main() {
+  // Load .env from project root BEFORE any env-var reading. Shell exports win over
+  // .env file values (loadDotEnvIntoProcessEnv only sets keys not already in process.env).
+  // This must run before legacy aliasing so .env values take precedence over MCP_JSA_* vars.
+  const { loadDotEnvIntoProcessEnv } = await import('./core/env_loader.js');
+  const earlyProjectRoot = process.env.JOBOPS_PROJECT_ROOT || process.cwd();
+  loadDotEnvIntoProcessEnv(earlyProjectRoot);
+
   // Map legacy MCP_JSA_* env vars onto JOBOPS_* before any subcommand reads them.
   // (config.ts does this too, but several subcommands read process.env directly
   // without importing config — so do it here at the entry point as well.)
@@ -635,6 +877,11 @@ async function main() {
       case 'connect': await cmdConnect(flags); break;
       case 'status':  await cmdStatus(flags);  break;
       case 'reseed':    await cmdReseed(flags);   break;
+      case 'compile-packet': await cmdCompilePacket(flags); break;
+      case 'sync':    await cmdSync(flags);       break;
+      case 'connect_to_hirebridge': await cmdConnectToHireBridge(flags); break;
+      case 'broadcast': await cmdBroadcast(flags); break;
+      case 'update':  await cmdUpdate(flags);     break;
       case 'templates': await cmdTemplates();     break;
       case '--version': case '-v': case 'version': console.log(PKG.version); break;
       case 'help':    case '--help': case '-h': default: cmdHelp(); break;

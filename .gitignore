@@ -73,3 +73,6 @@ docs/*.synctex.gz
 docs/*.fls
 docs/*.fdb_latexmk
 docs/preview-*.png
+
+# Development planning docs (working documents, not shipped)
+plan.md
