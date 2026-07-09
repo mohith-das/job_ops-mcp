@@ -115,7 +115,7 @@ without one.
 
 ---
 
-## Tools (51 — one MCP `tools/list` call away)
+## Tools (58 — one MCP `tools/list` call away)
 
 | Group | Tools |
 |---|---|
@@ -128,6 +128,7 @@ without one.
 | **Interview / offer** | `extract_stories`, `get_story_bank`, `negotiation_brief` |
 | **Research** | `deep_research`, `enrich_company`, `daily_digest` |
 | **Profile + ops** | `get_career_packet`, `update_career_packet` (whole-doc), `edit_packet_item` / `remove_packet_item` (one bullet/project/skill/tagline), `restore_packet_version` (history + restore), `reseed_career_packet` (safe by default), `sync_packet_to_cv`, `update_profile` (elicitation), `cost_estimate`, `doctor` (read-only health) |
+| **Federation** | `compile_career_packet`, `get_career_packet_json` (public-safe), `sync_to_livingcv`, `generate_embeddings`, `get_embeddings`, `broadcast_signal`, `get_federation_status`, `update_jobops` |
 | **Apply (preview only — never submits)** | `apply_prefill` |
 | **Visa (optional, can be hidden)** | `visa_signal`, `import_h1b`, `import_linkedin` |
 | **Scheduler (opt-in cron, off by default)** | `scheduler_status`, `scheduler_enable`, `scheduler_disable` |
@@ -309,6 +310,14 @@ roles where sponsorship is a non-issue — turn it off; the rest of the system w
 | `JOBOPS_LLM_MODEL` | _empty_ | Provider-specific model id |
 | `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` | _empty_ | Provider credentials — needed for `api`/batch scoring unless your client supports MCP sampling (most don't; `mode="chat"` never needs a key) |
 | `JOBOPS_SCHEDULER_ENABLED` | `false` | Whether opt-in cron runs at all |
+| `JOBOPS_LIVINGCV_URL` | `http://127.0.0.1:7890` | LivingCV Master Relay base URL for career packet sync |
+| `JOBOPS_LIVINGCV_TOKEN` | _empty_ | Bearer token for LivingCV Master Relay authentication |
+| `JOBOPS_HIREBRIDGE_URL` | `https://api.hirebridge.io` | HireBridge central router base URL for signal broadcast |
+| `JOBOPS_HIREBRIDGE_TOKEN` | _empty_ | Bearer token for HireBridge (set by `connect_to_hirebridge`) |
+| `JOBOPS_HIREBRIDGE_EMAIL` | _empty_ | Email associated with HireBridge connection |
+| `JOBOPS_EMBEDDING_PROVIDER` | `local` | Embedding provider: `local` (all-MiniLM-L6-v2 via `@xenova/transformers`), `openai`, `voyage`, `none` |
+| `JOBOPS_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Model name for the embedding provider |
+| `OPENAI_API_KEY` / `VOYAGE_API_KEY` | _empty_ | Credentials for OpenAI / Voyage embedding providers |
 
 A working starter is at `.env.example`.
 
@@ -742,6 +751,126 @@ Job cadence is fixed (4h / 30m / hourly with an 8AM digest window). Toggle off w
 
 ---
 
+## Federation — private edge-intelligence node
+
+JobOps operates as a **private edge-intelligence node** in a federated talent discovery
+network. Your local data (cv.md, profile.yml, story bank) is compiled into a canonical
+`career-packet.json`, synced to LivingCV (your personal relay), embedded locally, and
+broadcast as a signed signal snapshot to HireBridge (the central router) for opportunity
+matching. **No data leaves your machine without your explicit action** — embeddings are
+generated locally by default.
+
+### Data flow
+
+```
+cv.md + profile.yml + story_bank
+    ↓ compile_career_packet
+career-packet.json (JSON Resume superset + Lightcast IDs + evidence)
+    ↓ sync_to_livingcv
+LivingCV (canonical store)
+    ↓ generate_embeddings
+local vectors (cached by packet hash)
+    ↓ broadcast_signal
+HireBridge router (signed snapshot)
+```
+
+### CLI commands
+
+```bash
+# Compile the canonical career-packet.json
+jobops compile-packet                    # maps skills to Lightcast IDs via LLM
+jobops compile-packet --skip-lightcast   # skip Lightcast mapping (faster)
+
+# Sync career-packet.json to your LivingCV instance
+jobops sync                              # push to LivingCV
+jobops sync --force                      # push even if content unchanged
+
+# Authenticate with HireBridge (magic link flow)
+jobops connect_to_hirebridge             # prompts for email
+jobops connect_to_hirebridge --email you@example.com
+
+# Broadcast signal snapshot to HireBridge
+jobops broadcast
+
+# Check for jobops updates
+jobops update
+```
+
+### MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `compile_career_packet` | Compile cv.md + profile.yml + story_bank into `career-packet.json` (JSON Resume superset with Lightcast Open Skills IDs). Persists to DB + writes `output/career-packet.json`. |
+| `get_career_packet_json` | Get the active compiled career packet (read-only, **public-safe**). |
+| `sync_to_livingcv` | Push the compiled career packet to LivingCV via JSON-RPC. Requires `JOBOPS_LIVINGCV_TOKEN`. |
+| `generate_embeddings` | Generate vector embeddings of career packet sections using the configured provider (local, OpenAI, or Voyage). Cached by packet hash. |
+| `get_embeddings` | Get cached embedding metadata (sections, model, dim) without the vector data. Read-only. |
+| `broadcast_signal` | Compile and broadcast a signed snapshot (embeddings + capabilities + LivingCV URL) to HireBridge. Signed with HMAC-SHA256. |
+| `get_federation_status` | Get federation state: LivingCV sync time, HireBridge connection status, cached embedding count, broadcast history. Read-only. |
+| `update_jobops` | Check npm registry for updates. Reports the update command if a newer version is available. |
+
+### HireBridge magic link flow
+
+```
+1. jobops connect_to_hirebridge
+2. Enter your email → magic link sent
+3. Click the link in your email
+4. 🟢 Connected to HireBridge as you@example.com
+5. Token saved to .env (JOBOPS_HIREBRIDGE_TOKEN)
+```
+
+The token is a long-lived bearer token stored in `.env`. HireBridge's device auth API:
+- `POST /auth/device` — sends magic link
+- `POST /auth/token` — polls for approval (handles `authorization_pending`, `slow_down`, `expired_token`)
+
+### Embedding providers
+
+| Provider | Env var | Model | Dim | Notes |
+|----------|---------|-------|-----|-------|
+| **local** (default) | `JOBOPS_EMBEDDING_PROVIDER=local` | `all-MiniLM-L6-v2` | 384 | Runs entirely on-device via `@xenova/transformers`. Model auto-downloads on first use (~90MB). No data leaves your machine. |
+| **openai** | `JOBOPS_EMBEDDING_PROVIDER=openai` | `text-embedding-3-small` | 1536 | Requires `OPENAI_API_KEY`. |
+| **voyage** | `JOBOPS_EMBEDDING_PROVIDER=voyage` | `voyage-3-lite` | 384 | Requires `VOYAGE_API_KEY`. |
+| **none** | `JOBOPS_EMBEDDING_PROVIDER=none` | — | — | Embedding generation is disabled. Broadcast won't work without embeddings. |
+
+### Full workflow example
+
+```text
+# In chat (or CLI):
+compile_career_packet             # Step 1: build career-packet.json
+generate_embeddings               # Step 2: embed locally
+sync_to_livingcv                  # Step 3: push to LivingCV
+connect_to_hirebridge             # Step 4: auth with HireBridge (one-time)
+broadcast_signal                  # Step 5: broadcast signed signal
+get_federation_status             # Check sync/broadcast state
+```
+
+### Signal snapshot shape
+
+```json
+{
+  "schema": "jobops-signal-1.0",
+  "candidate": { "email": "...", "livingcv_url": "..." },
+  "packet_hash": "sha256...",
+  "packet_version": 3,
+  "embeddings": { "model": "all-MiniLM-L6-v2", "dim": 384, "sections": [...] },
+  "capabilities": [{ "competency": "leadership", "evidence_count": 3, "story_ids": [...] }],
+  "broadcast_at": "2026-07-08T...",
+  "signature": "hmac-sha256(token, canonical_json)"
+}
+```
+
+The signature proves the snapshot came from the authenticated user without exposing the
+HireBridge token. The snapshot includes only the **signal** (embeddings + competency
+counts) — never raw resume text, story content, or PII.
+
+> **Public-safe surface:** `get_career_packet_json` is marked `publicSafe`, meaning it's
+> available on the `/mcp/public` endpoint for external recruiter-side AI agents. It returns
+> the structured career packet (JSON Resume superset) — the same packet synced to
+> LivingCV and embedded for broadcast. No PII beyond what's in your profile.yml identity
+> fields is exposed.
+
+---
+
 ## Hard rules baked in
 
 1. **Never surface visa / work-auth** in any resume, cover letter, or outreach. Visa data
@@ -767,13 +896,28 @@ jobops/
 ├── cv.example.md              # → cv.md after init
 ├── config/profile.example.yml # → config/profile.yml after init
 ├── portals.example.yml        # → portals.yml after init
+├── .env.example               # → .env after init (LivingCV, HireBridge, embedding config)
 ├── src/                       # TypeScript source (not published)
-│   ├── cli.ts                 # init / start / doctor / connect
+│   ├── cli.ts                 # init / start / doctor / connect / compile-packet / sync / connect_to_hirebridge / broadcast / update
 │   ├── server.ts              # HTTP + MCP boot
 │   ├── core/                  # llm, providers, jobs, reports, render, scan_engine, …
+│   │   ├── career_packet_json.ts  # federation: compile career-packet.json
+│   │   ├── lightcast.ts           # federation: LLM-assisted Lightcast skill mapping
+│   │   ├── embeddings.ts          # federation: local/API embedding providers
+│   │   ├── livingcv_client.ts     # federation: JSON-RPC sync to LivingCV
+│   │   ├── hirebridge_client.ts   # federation: device auth + signal broadcast
+│   │   ├── signal_broadcast.ts    # federation: snapshot compiler + broadcaster
+│   │   ├── updater.ts             # federation: npm registry version checker
+│   │   └── env_loader.ts          # .env file loader (precedence: shell > .env > legacy)
 │   ├── http/                  # express app + dashboard
 │   ├── mcp/                   # define + register + tools/
-│   └── migrations/*.sql       # SQLite migrations
+│   │   └── tools/
+│   │       ├── career_packet_json.ts  # federation tools
+│   │       ├── embeddings.ts          # federation tools
+│   │       ├── sync_to_livingcv.ts    # federation tools
+│   │       ├── signal_broadcast.ts    # federation tools
+│   │       └── update_jobops.ts       # federation tools
+│   └── migrations/*.sql       # SQLite migrations (007 added federation tables)
 └── data/, output/             # gitignored runtime state
 ```
 
