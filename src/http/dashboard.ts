@@ -203,7 +203,8 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
       <td>${r.report_url ? `<a href="${escapeHtml(r.report_url)}">report</a>` : '<span class="muted">—</span>'}</td>
       <td>${[
         r.resume_url ? `<a href="${escapeHtml(r.resume_url)}">Res.</a>` : null,
-        r.cover_url ? `<a href="${escapeHtml(r.cover_url)}">Cov.</a>` : null
+        r.cover_url ? `<a href="${escapeHtml(r.cover_url)}">Cov.</a>` : null,
+        (r.resume_tex_url || r.cover_tex_url) ? `<a href="#" onclick="dlTex(event, [${[r.resume_tex_url, r.cover_tex_url].filter(Boolean).map(u => `'${escapeHtml(u)}'`).join(',')}])">TeX</a>` : null
       ].filter(Boolean).join(' ') || '<span class="muted">—</span>'}</td>
       <td class="meta">${escapeHtml((r.discovered_at ?? '').slice(0, 16))}</td>
       <td class="actions"><button class="act danger trash-btn" data-id="${r.job_id}" data-label="${escapeHtml(r.title)} @ ${escapeHtml(r.company_name)}" title="Move to trash (recoverable)">Trash</button></td>
@@ -249,6 +250,17 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
   const baseUrl = qs(p);
   const script = `
   const FORM = document.getElementById('filters');
+  window.dlTex = function(e, urls) {
+    e.preventDefault();
+    urls.forEach((u, i) => setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = u;
+      a.download = u.split('/').pop() || 'file.tex';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }, i * 150));
+  };
   async function api(method, url, body) {
     const r = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     if (!r.ok) { const t = await r.text().catch(()=>''); alert('Action failed (' + r.status + '): ' + t); throw new Error(t); }

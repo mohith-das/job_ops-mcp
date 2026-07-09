@@ -31,6 +31,7 @@ export interface TrackerItem {
   discovered_at: string | null; scored_at: string | null; applied_at: string | null;
   trashed: boolean;
   report_url: string | null; resume_url: string | null; cover_url: string | null;
+  resume_tex_url: string | null; cover_tex_url: string | null;
 }
 
 export interface TrackerResult {
@@ -101,23 +102,30 @@ export function queryTracker(qr: TrackerQuery): TrackerResult {
       j.discovered_at, j.scored_at, j.applied_at, j.trashed_at,
       (SELECT er.html_path FROM eval_reports er WHERE er.job_id = j.id ORDER BY er.created_at DESC LIMIT 1) AS report_html,
       (SELECT a.resume_path FROM applications a WHERE a.job_id = j.id LIMIT 1) AS resume_path,
-      (SELECT a.cover_path  FROM applications a WHERE a.job_id = j.id LIMIT 1) AS cover_path
+      (SELECT a.cover_path  FROM applications a WHERE a.job_id = j.id LIMIT 1) AS cover_path,
+      (SELECT a.rendered_files FROM applications a WHERE a.job_id = j.id LIMIT 1) AS rendered_files
     FROM jobs j LEFT JOIN companies c ON c.id = j.company_id
     ${clause}
     ORDER BY ${orderBy(qr.sort, qr.dir)}
     LIMIT ? OFFSET ?
   `).all(...params, limit, offset) as any[];
 
-  const items: TrackerItem[] = rows.map(r => ({
-    job_id: r.job_id, title: r.title, company_name: r.company_name,
-    score_total: r.score_total, role_category: r.role_category, seniority: r.seniority,
-    location: r.location, status: r.status, source_url: r.source_url,
-    discovered_at: r.discovered_at, scored_at: r.scored_at, applied_at: r.applied_at,
-    trashed: !!r.trashed_at,
-    report_url: r.report_html ? fileUrl(r.report_html) : null,
-    resume_url: r.resume_path ? fileUrl(r.resume_path) : null,
-    cover_url:  r.cover_path  ? fileUrl(r.cover_path)  : null,
-  }));
+  const items: TrackerItem[] = rows.map(r => {
+    let rendered: any = null;
+    try { rendered = r.rendered_files ? JSON.parse(r.rendered_files) : null; } catch {}
+    return {
+      job_id: r.job_id, title: r.title, company_name: r.company_name,
+      score_total: r.score_total, role_category: r.role_category, seniority: r.seniority,
+      location: r.location, status: r.status, source_url: r.source_url,
+      discovered_at: r.discovered_at, scored_at: r.scored_at, applied_at: r.applied_at,
+      trashed: !!r.trashed_at,
+      report_url: r.report_html ? fileUrl(r.report_html) : null,
+      resume_url: r.resume_path ? fileUrl(r.resume_path) : null,
+      cover_url:  r.cover_path  ? fileUrl(r.cover_path)  : null,
+      resume_tex_url: rendered?.resume?.tex ? fileUrl(rendered.resume.tex) : null,
+      cover_tex_url:  rendered?.cover?.tex  ? fileUrl(rendered.cover.tex)  : null,
+    };
+  });
 
   return { items, total, limit, offset };
 }

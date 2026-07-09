@@ -21,7 +21,9 @@ const STORAGE_KEY = 'jobops-theme';
 
 /** Goes into <head> BEFORE styles. Runs synchronously to set the attribute pre-paint. */
 export function themeInitScript(): string {
-  return `<script>(function(){try{var t=localStorage.getItem('${STORAGE_KEY}');if(!t){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>`;
+  const favicon = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="white" rx="20"/><text x="50" y="52" font-family="Arial, sans-serif" font-weight="bold" font-size="70" dominant-baseline="middle" text-anchor="middle"><tspan fill="red">J</tspan><tspan fill="violet">O</tspan></text></svg>`;
+  return `<link rel="icon" href='${favicon}' type="image/svg+xml">
+<script>(function(){try{var t=localStorage.getItem('${STORAGE_KEY}');if(!t){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>`;
 }
 
 /** CSS variables. Everything else in the page references var(--*) — no hardcoded colours. */
