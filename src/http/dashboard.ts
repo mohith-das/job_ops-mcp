@@ -201,6 +201,10 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
       <td>${statusSelect(r.job_id, r.status)}</td>
       <td>${escapeHtml(r.location ?? '')}</td>
       <td>${r.report_url ? `<a href="${escapeHtml(r.report_url)}">report</a>` : '<span class="muted">—</span>'}</td>
+      <td>${[
+        r.resume_url ? `<a href="${escapeHtml(r.resume_url)}">Res.</a>` : null,
+        r.cover_url ? `<a href="${escapeHtml(r.cover_url)}">Cov.</a>` : null
+      ].filter(Boolean).join(' ') || '<span class="muted">—</span>'}</td>
       <td class="meta">${escapeHtml((r.discovered_at ?? '').slice(0, 16))}</td>
       <td class="actions"><button class="act danger trash-btn" data-id="${r.job_id}" data-label="${escapeHtml(r.title)} @ ${escapeHtml(r.company_name)}" title="Move to trash (recoverable)">Trash</button></td>
     </tr>`).join('');
@@ -234,7 +238,7 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
       <thead><tr>
         ${sortableTh('Score', 'score')}
         ${sortableTh('Company', 'company')}
-        <th>Title</th><th>Role</th><th>Level</th><th>Status</th><th>Location</th><th>Report</th>
+        <th>Title</th><th>Role</th><th>Level</th><th>Status</th><th>Location</th><th>Report</th><th>Docs</th>
         ${sortableTh('Discovered', 'discovered')}
         <th></th>
       </tr></thead>
