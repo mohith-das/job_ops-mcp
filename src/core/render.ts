@@ -5,19 +5,20 @@
 // The CV template lives in templates/cv-template.html. Fonts live in fonts/ and are
 // referenced from the template via ./fonts/*; we resolve them to absolute file:// URLs
 // before letting Chromium render.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Browser } from 'playwright';
+import yaml from 'js-yaml';
 
 import { config } from '../config.js';
-import { type CVData } from './cv_parse.js';
+import { type CVData, type GenericSectionItem } from './cv_parse.js';
 import { cvForRender } from './render_source.js';
 import { getJob } from './jobs.js';
 import { escapeHtml } from './html.js';
 import { scanForVisaLeakage } from './outreach_safety.js';
 import { getSharedBrowser, closeSharedBrowser } from './browser.js';
-import { loadTemplate, effectiveDefaultTemplate } from './templates.js';
+import { loadTemplate, effectiveDefaultTemplate, resolveTheme } from './templates.js';
 
 // Templates are looked up per-theme; the loader does its own cache where useful.
 // We resolve fresh on each call so a theme change is picked up immediately.
@@ -95,41 +96,133 @@ export async function renderPdf(args: RenderArgs): Promise<RenderedFile[]> {
 
 // ── Template fill ────────────────────────────────────────────────────────────
 
-function renderResumeHtml(cv: CVData, theme: string): string {
-  const tpl = loadCvTemplate(theme);
-  const replacements: Record<string, string> = {
-    LANG:               'en',
-    NAME:               cv.name,
-    PHONE:              cv.phone,
-    EMAIL:              cv.email,
-    LINKEDIN_URL:       cv.linkedin_url,
-    LINKEDIN_DISPLAY:   cv.linkedin_display,
-    PORTFOLIO_URL:      cv.portfolio_url,
-    PORTFOLIO_DISPLAY:  cv.portfolio_display,
-    LOCATION:           cv.location,
-    PAGE_WIDTH:         '7.4in',
-    SECTION_SUMMARY:       'Professional Summary',
-    SECTION_COMPETENCIES:  'Core Competencies',
-    SECTION_EXPERIENCE:    'Work Experience',
-    SECTION_PROJECTS:      'Projects',
-    SECTION_EDUCATION:     'Education',
-    SECTION_CERTIFICATIONS:'Certifications',
-    SECTION_SKILLS:        'Skills',
-    SUMMARY_TEXT:       escapeHtml(cv.summary),
-    COMPETENCIES:       cv.competencies.map(c => `<span class="competency-tag">${escapeHtml(c)}</span>`).join('\n      '),
-    EXPERIENCE:         cv.experiences.map(renderExperience).join('\n    '),
-    PROJECTS:           cv.projects.map(renderProject).join('\n    '),
-    EDUCATION:          cv.education.map(renderEducation).join('\n    '),
-    CERTIFICATIONS:     cv.certifications.length
+// Every placeholder the bundled/jakes themes reference today. Reshaped from a
+// flat substitution object into a lookup table so renderResumeHtml can fall
+// through to auto-detected custom sections (see below) for keys it doesn't
+// know about, instead of hardcoding a branch per section.
+const STATIC_RENDERERS: Record<string, (cv: CVData) => string> = {
+  LANG:               () => 'en',
+  NAME:               cv => cv.name,
+  PHONE:              cv => cv.phone,
+  EMAIL:              cv => cv.email,
+  LINKEDIN_URL:       cv => cv.linkedin_url,
+  LINKEDIN_DISPLAY:   cv => cv.linkedin_display,
+  PORTFOLIO_URL:      cv => cv.portfolio_url,
+  PORTFOLIO_DISPLAY:  cv => cv.portfolio_display,
+  LOCATION:           cv => cv.location,
+  PAGE_WIDTH:         () => '7.4in',
+  SECTION_SUMMARY:        () => 'Professional Summary',
+  SECTION_COMPETENCIES:   () => 'Core Competencies',
+  SECTION_EXPERIENCE:     () => 'Work Experience',
+  SECTION_PROJECTS:       () => 'Projects',
+  SECTION_EDUCATION:      () => 'Education',
+  SECTION_CERTIFICATIONS: () => 'Certifications',
+  SECTION_SKILLS:         () => 'Skills',
+  SUMMARY_TEXT:       cv => escapeHtml(cv.summary),
+  COMPETENCIES:       cv => cv.competencies.map(c => `<span class="competency-tag">${escapeHtml(c)}</span>`).join('\n      '),
+  EXPERIENCE:         cv => cv.experiences.map(renderExperience).join('\n    '),
+  PROJECTS:           cv => cv.projects.map(renderProject).join('\n    '),
+  EDUCATION:          cv => cv.education.map(renderEducation).join('\n    '),
+  CERTIFICATIONS:     cv => cv.certifications.length
                           ? cv.certifications.map(renderCert).join('\n    ')
                           : '<div class="cert-item"><span class="cert-title muted">—</span></div>',
-    SKILLS:             renderSkills(cv.skills),
-  };
-  let html = tpl;
-  for (const [k, v] of Object.entries(replacements)) {
-    html = html.replaceAll(`{{${k}}}`, v ?? '');
+  SKILLS:             cv => renderSkills(cv.skills),
+};
+
+/**
+ * Fill the resume template for `theme`. Placeholders resolve in three tiers:
+ *   1. STATIC_RENDERERS — the 7 standard sections + identity fields, byte-
+ *      identical to the pre-registry hardcoded substitution.
+ *   2. Auto-detected custom sections — any `## Heading` in cv.md that isn't a
+ *      standard section (see cv_parse.ts's parseCustomSections) renders via
+ *      its {{KEY}}/{{SECTION_KEY}} placeholders, using the theme's optional
+ *      sections.yml item template if one exists, else a generic block.
+ *   3. Anything else is left in the output verbatim — same graceful
+ *      degradation as today (a template referencing a placeholder nothing
+ *      fills just doesn't get that placeholder substituted).
+ */
+export function renderResumeHtml(cv: CVData, theme: string): string {
+  const tpl = loadCvTemplate(theme);
+  const overrides = loadCustomSectionOverrides(theme);
+  return tpl.replace(/\{\{([A-Z0-9_]+)\}\}/g, (m, key: string) => {
+    const r = STATIC_RENDERERS[key];
+    if (r) return r(cv) ?? '';
+    if (key.startsWith('SECTION_')) {
+      const label = resolveCustomLabel(key.slice('SECTION_'.length), cv, overrides);
+      if (label !== null) return label;
+    } else {
+      const sec = cv.customSections?.[key];
+      if (sec) return renderCustomSectionItems(sec.items, overrides[key]);
+    }
+    return m;
+  });
+}
+
+// ── Custom sections (auto-detected from cv.md, see cv_parse.ts) ─────────────
+
+interface SectionOverride { item: string; join: string; label?: string; }
+
+/**
+ * Optional per-theme `sections.yml`/`sections.yaml`: a mapping of
+ * PLACEHOLDER_KEY -> { item, join?, label? } that overrides the generic
+ * markup for one or more auto-detected custom sections. Absent file (the
+ * common case — default/jakes ship neither) returns {} with a single
+ * existsSync check per candidate filename, no parse attempted.
+ */
+function loadCustomSectionOverrides(theme: string): Record<string, SectionOverride> {
+  const info = resolveTheme(theme);
+  for (const filename of ['sections.yml', 'sections.yaml']) {
+    const abs = resolve(info.dir, filename);
+    if (!existsSync(abs)) continue;
+    let raw: unknown;
+    try { raw = yaml.load(readFileSync(abs, 'utf-8')); }
+    catch (err: any) { throw new Error(`Theme "${theme}" ${filename} at ${abs} failed to parse: ${err?.message ?? err}`); }
+    if (!raw || typeof raw !== 'object') {
+      throw new Error(`Theme "${theme}" ${filename} at ${abs} must be a mapping of PLACEHOLDER_KEY -> { item, join?, label? }.`);
+    }
+    const out: Record<string, SectionOverride> = {};
+    for (const [key, val] of Object.entries(raw as Record<string, any>)) {
+      if (!val || typeof val.item !== 'string') {
+        throw new Error(`Theme "${theme}" ${filename} at ${abs}: entry "${key}" is missing a string "item" template.`);
+      }
+      out[key] = {
+        item:  val.item,
+        join:  typeof val.join === 'string' ? val.join : '\n    ',
+        label: typeof val.label === 'string' ? val.label : undefined,
+      };
+    }
+    return out;
   }
-  return html;
+  return {};
+}
+
+function resolveCustomLabel(key: string, cv: CVData, overrides: Record<string, SectionOverride>): string | null {
+  const sec = cv.customSections?.[key];
+  if (!sec) return null;
+  return overrides[key]?.label ?? sec.label;
+}
+
+function renderCustomSectionItems(items: GenericSectionItem[], override: SectionOverride | undefined): string {
+  return items.map(it => renderCustomSectionItem(it, override)).join(override?.join ?? '\n    ');
+}
+
+function renderCustomSectionItem(item: GenericSectionItem, override: SectionOverride | undefined): string {
+  if (override) return fillItemTemplate(override.item, item);
+  return `
+    <div class="custom-section-item">
+      <span class="custom-section-title">${escapeHtml(item.title)}</span>${item.badge ? ` <span class="custom-section-badge">${escapeHtml(item.badge)}</span>` : ''}
+      <div class="custom-section-desc">${inlineBold(escapeHtml(item.description))}</div>
+    </div>`;
+}
+
+/** Fills `{{title}}`/`{{badge}}`/`{{description}}` in a sections.yml item
+ *  template — lowercase field names so item-level substitution can't collide
+ *  with the page-level ALL-CAPS `{{KEY}}` placeholder convention. */
+function fillItemTemplate(tpl: string, item: GenericSectionItem): string {
+  return tpl.replace(/\{\{(title|badge|description)\}\}/g, (_m, field: 'title' | 'badge' | 'description') => {
+    const raw = item[field] ?? '';
+    return field === 'description' ? inlineBold(escapeHtml(raw)) : escapeHtml(raw);
+  });
 }
 
 function renderExperience(e: any): string {

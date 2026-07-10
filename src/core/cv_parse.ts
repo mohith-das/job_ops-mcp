@@ -20,6 +20,10 @@ export interface CVData {
   education:          EducationItem[];
   certifications:     CertItem[];
   skills:             SkillCategory[];
+  /** Auto-detected sections beyond the standard 7, keyed by the placeholder
+   *  name the heading derives (e.g. "## Publications" → "PUBLICATIONS").
+   *  Optional/additive — absent for any cv.md with only standard headings. */
+  customSections?:    Record<string, CustomSection>;
 }
 
 export interface ExperienceItem {
@@ -47,6 +51,17 @@ export interface EducationItem {
 export interface CertItem { title: string; org: string; year: string; }
 export interface SkillCategory { category: string; items: string; }
 
+/** A generic `{ title, badge?, description }` bullet item — the shape any
+ *  auto-detected custom section (Publications, Patents, Volunteering, ...)
+ *  parses into. See `parseCustomSections` below. */
+export interface GenericSectionItem { title: string; badge: string | null; description: string; }
+
+/** One auto-detected `## Heading` from cv.md that isn't a recognised standard
+ *  section. `label` preserves the heading's original casing (for the
+ *  `{{SECTION_<KEY>}}` placeholder); `items` is `[]` when the heading has no
+ *  parseable bullets (renders as empty string, never a leaked placeholder). */
+export interface CustomSection { label: string; items: GenericSectionItem[]; }
+
 const SECTION_HEADERS = [
   'professional summary',
   'work experience',
@@ -56,6 +71,15 @@ const SECTION_HEADERS = [
   'certifications',
   'skills',
 ];
+
+// Headings already consumed by a dedicated parser below — anything else found
+// in cv.md is auto-detected as a custom section (see parseCustomSections).
+const RESERVED_HEADINGS = new Set([
+  'professional summary', 'summary',
+  'work experience', 'experience',
+  'projects & open source', 'projects',
+  'education', 'certifications', 'skills',
+]);
 
 export function parseCV(): CVData {
   const { cvMd, profile } = loadProjectFiles();
@@ -78,6 +102,7 @@ export function parseCVText(cvMd: string | null, profile: Profile | null): CVDat
   if (!cvMd) return empty;
 
   const sections = splitSections(cvMd);
+  const customSections = parseCustomSections(sections, extractHeadingLabels(cvMd));
   return {
     ...identity,
     summary:        parseSummary(sections),
@@ -87,6 +112,7 @@ export function parseCVText(cvMd: string | null, profile: Profile | null): CVDat
     education:      parseEducation(sections),
     certifications: parseCertifications(sections),
     skills:         parseSkills(sections),
+    ...(Object.keys(customSections).length ? { customSections } : {}),
   };
 }
 
@@ -128,6 +154,49 @@ function splitSections(md: string): Map<string, string> {
     m.set(indices[i].name, md.slice(indices[i].start, end).trim());
   }
   return m;
+}
+
+/** Original-cased `## Heading` text, keyed by the same lowercased name
+ *  `splitSections` uses — splitSections itself only keeps the lowercased key,
+ *  so custom-section labels need this parallel pass to preserve casing. */
+function extractHeadingLabels(md: string): Map<string, string> {
+  const labels = new Map<string, string>();
+  const re = /^##\s+(.+)$/gm;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(md))) {
+    const name = match[1].trim();
+    labels.set(name.toLowerCase(), name);
+  }
+  return labels;
+}
+
+// ── Custom sections (auto-detected, anything not in RESERVED_HEADINGS) ──────
+
+/** heading text → `{{PLACEHOLDER_KEY}}`: uppercase, non-alnum runs → `_`, trimmed. */
+function headingToPlaceholderKey(heading: string): string {
+  return heading.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+/** Same bullet grammar as parseProjects: `- **Title** (badge) — description`. */
+function parseGenericBulletList(body: string): GenericSectionItem[] {
+  const items: GenericSectionItem[] = [];
+  for (const line of body.split('\n')) {
+    const m = line.match(/^-\s+\*\*([^*]+)\*\*\s*(?:\(([^)]+)\))?\s*[—–-]\s*(.+)$/);
+    if (!m) continue;
+    items.push({ title: m[1].trim(), badge: m[2]?.trim() ?? null, description: m[3].trim() });
+  }
+  return items;
+}
+
+function parseCustomSections(sections: Map<string, string>, labels: Map<string, string>): Record<string, CustomSection> {
+  const out: Record<string, CustomSection> = {};
+  for (const [lower, body] of sections) {
+    if (RESERVED_HEADINGS.has(lower)) continue;
+    const key = headingToPlaceholderKey(lower);
+    if (!key) continue;
+    out[key] = { label: labels.get(lower) ?? lower, items: parseGenericBulletList(body) };
+  }
+  return out;
 }
 
 function getSection(sections: Map<string, string>, ...names: string[]): string {

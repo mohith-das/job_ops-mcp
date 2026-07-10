@@ -158,6 +158,93 @@ template, so a single class change in your theme won't reach the inner elements.
 | `{{COMPANY_LOCATION}}` | `, Remote` or empty — prefixed comma already included |
 | `{{BODY}}` | Paragraph-broken cover body wrapped in `<p>…</p>` per paragraph |
 
+## Adding a custom section (Publications, Patents, Volunteering, …)
+
+`resume.html` isn't limited to the 7 placeholders above. Any `## Heading` you add
+to your own `cv.md` that isn't one of the standard sections (Summary, Work
+Experience, Projects, Education, Certifications, Skills) is **auto-detected** and
+becomes available as a placeholder — no code, no theme file, no new dependency.
+This is entirely markdown + HTML; nothing here requires knowing JavaScript.
+
+### The two-step version
+
+1. Add a heading + bullets to `cv.md`, using the same bullet grammar Projects
+   already uses:
+
+   ```markdown
+   ## Publications
+   - **Attention Is All You Need** (NeurIPS 2017) — Introduced the Transformer architecture
+   - **A Second Paper** — description with no venue/badge is fine too
+   ```
+
+2. Reference it in your theme's `resume.html`, wherever you want it to appear:
+
+   ```html
+   <div class="section">
+     <div class="section-title">{{SECTION_PUBLICATIONS}}</div>
+     {{PUBLICATIONS}}
+   </div>
+   ```
+
+Render a resume and the section appears — title, optional `(badge)`, and
+description per bullet, `**bold**` rendered as `<strong>`, everything escaped.
+Style it with a `.custom-section-item` / `.custom-section-title` /
+`.custom-section-badge` / `.custom-section-desc` rule in your theme's `<style>`
+block, same as any other section.
+
+### How the heading becomes a placeholder name
+
+Uppercase the heading, turn every run of non-alphanumeric characters into `_`,
+trim leading/trailing underscores: `"Publications"` → `PUBLICATIONS`,
+`"Open Source Contributions"` → `OPEN_SOURCE_CONTRIBUTIONS`. The label
+placeholder is always `SECTION_` + that key, and defaults to the heading text
+exactly as you wrote it. A heading with no bullets that parse still registers
+the section (so `{{SECTION_X}}` still fills in) but `{{X}}` renders as an empty
+string — it never leaves a literal `{{X}}` in a PDF you're about to send out. A
+placeholder with **no** matching heading at all is left untouched, same as any
+placeholder your template references that nothing fills.
+
+### Optional: custom markup via `sections.yml`
+
+If you want different HTML per item than the generic block above — no code,
+still just markup — drop a `sections.yml` (or `.yaml`) next to `resume.html` in
+your theme directory:
+
+```yaml
+PUBLICATIONS:
+  label: "Selected Publications"     # optional — overrides the auto-derived label
+  item: |
+    <div class="publication">
+      <span class="publication-title">{{title}}</span>
+      <span class="publication-venue">{{badge}}</span>
+      <div class="publication-desc">{{description}}</div>
+    </div>
+  join: "\n    "                      # optional — how items are joined; defaults to this
+```
+
+`{{title}}`, `{{badge}}`, `{{description}}` (lowercase — distinct from the
+page-level `{{ALL_CAPS}}` placeholders) are filled per bullet item, escaped the
+same way the bundled sections are. This only overrides the *markup* for
+auto-detected sections — it can't restyle the structure of the 7 standard
+sections, which are already themable via CSS against their existing class names
+(see the `resume.html` table above).
+
+### Worked example: fixing your own dangling placeholder
+
+If your `resume.html` already references a placeholder that's never rendered
+anything — for example a `jakes`-style theme with `{{SECTION_ENTREPRENEURIAL}}`
+and `{{ENTREPRENEURIAL}}` in the markup but no matching `## Entrepreneurial`
+section in `cv.md` — today those placeholders just sit there unfilled. Add the
+heading to your `cv.md`:
+
+```markdown
+## Entrepreneurial
+- **Side Project Co** (Founder, 2019–2021) — Built and sold a small SaaS tool
+```
+
+Render again and the section appears — no theme edit, no server update, just
+the heading.
+
 ## .docx
 
 `docx` artifacts are generated programmatically and **do not use themes**. The Word
@@ -190,8 +277,9 @@ These run regardless of which theme you select:
 | Theme directory not found | `Unknown template theme "<name>". Available: <list>. Searched <dirs>.` Tool returns this string, no partial output is written. |
 | Theme present but missing the requested file (e.g. asked for `cover.html`, theme only ships `resume.tex`) | `Theme "<name>" (<source>, at <dir>) is missing <file>. Files present: <list>.` |
 | Template empty / no `\documentclass` / no `\begin{document}` / no `<html>` tag | Single-line error naming the theme + file path. The renderer **never** ships a half-broken artifact to disk. |
-| Template references a placeholder the renderer doesn't fill | Replaced with empty string. No error. |
+| Template references a placeholder the renderer doesn't fill | `.tex`: replaced with empty string. `resume.html`: an unrecognized, non-custom-section placeholder is left in the output verbatim (for debugging); a recognized custom-section placeholder whose heading has no parseable bullets renders as empty string. Neither case is an error. |
 | Renderer fills a placeholder the template doesn't reference | Silently dropped. No error. |
+| `sections.yml`/`.yaml` present but not a mapping, or an entry missing a string `item` | `Theme "<name>" sections.yml at <path>: ...` — single-line error naming the theme + file, same style as the other template errors. No partial output is written. |
 | Configured `JOBOPS_DEFAULT_TEMPLATE` doesn't exist on disk | Stderr warning, falls back to `"default"`. The server still boots. |
 
 ## Verifying a custom theme
