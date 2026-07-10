@@ -9,8 +9,26 @@
 //   2. HTTP-level: an unauthenticated POST to /mcp/public lists exactly the
 //      two tools, and an unauthenticated POST to /mcp is rejected.
 
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+
+let sandbox;
+before(async () => {
+  sandbox = mkdtempSync(join(tmpdir(), 'jobops-public-mcp-'));
+  mkdirSync(resolve(sandbox, 'config'), { recursive: true });
+  writeFileSync(resolve(sandbox, 'cv.md'), `# CV`);
+  writeFileSync(resolve(sandbox, 'config/profile.yml'), `candidate:\n  full_name: "Test"`);
+  writeFileSync(resolve(sandbox, 'portals.yml'), `tracked_companies: []\n`);
+
+  process.env.JOBOPS_DATA_DIR     = resolve(sandbox, 'data');
+  process.env.JOBOPS_OUTPUT_DIR   = resolve(sandbox, 'output');
+  process.env.JOBOPS_PROJECT_ROOT = sandbox;
+});
+
+after(() => { if (sandbox) rmSync(sandbox, { recursive: true, force: true }); });
 
 // Use tsx so we can require the TypeScript source directly.
 // TEST_TARGET=src exercises the source tree (forces a recompile); default exercises dist/.
@@ -48,7 +66,7 @@ if (SRC) {
 // §5: "audit all 51 tools once and set it explicitly".
 test('every registered tool has an explicit mutates', () => {
   const all = listAllTools();
-  assert.ok(all.length >= 2, 'registry should contain the two public tools at minimum');
+  assert.ok(all.length >= 3, 'registry should contain the three public tools at minimum');
   const missing = all.filter((t) => typeof t.mutates !== 'boolean');
   assert.deepEqual(missing, [], `tools missing mutates: ${missing.map((t) => t.name).join(', ')}`);
 });
@@ -57,11 +75,11 @@ test('every registered tool has an explicit mutates', () => {
 //
 // Deep-equal at the registry level: closed by construction. Adding a third
 // publicSafe tool requires updating this test (and reviewer-approved intent).
-test('PUBLIC_TOOLS deep-equals exactly the two-portfolio tools', () => {
+test('PUBLIC_TOOLS deep-equals exactly the three public tools', () => {
   const pub = getPublicTools();
   assert.deepEqual(
     pub.map((t) => t.name).sort(),
-    ['get_career_packet', 'get_story_bank_public'].sort(),
+    ['get_career_packet', 'get_career_packet_json', 'get_story_bank_public'].sort(),
   );
   for (const t of pub) {
     assert.equal(t.mutates, false, `${t.name} must be mutates=false`);
@@ -96,7 +114,7 @@ test('defineTool refuses publicSafe + mutates=true', () => {
 // true (non-localhost binds, or token explicitly set even locally). To force
 // /mcp to gate even on this test, set JOBOPS_AUTH_TOKEN in the env.
 
-test('/mcp/public responds without a token (tools/list shows exactly the public tools)', async () => {
+test('/mcp/public responds without a token (tools/list shows exactly the three public tools)', async () => {
   // Initialize DB + ensure the public tools can actually run.
   getDb();
   await ensureActiveCareerPacket();
@@ -111,6 +129,7 @@ test('/mcp/public responds without a token (tools/list shows exactly the public 
   const cfgAny = config;
   cfgAny.authPolicy = { ...origAuth, requireToken: true, token: 'unauth-test-token' };
 
+  let server;
   try {
     const app = buildHttpApp();
     const { mountMcp } = await (SRC
@@ -120,7 +139,7 @@ test('/mcp/public responds without a token (tools/list shows exactly the public 
     mountMcp(app, '/mcp/public', [...getPublicTools()]);
 
     const { createServer } = await import('node:http');
-    const server = createServer(app);
+    server = createServer(app);
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = server.address().port;
     const base = `http://127.0.0.1:${port}`;
@@ -145,7 +164,7 @@ test('/mcp/public responds without a token (tools/list shows exactly the public 
     const r401 = await fetchJson('/mcp');
     assert.equal(r401.status, 401, '/mcp without token must 401');
 
-    // /mcp/public without a token → 200, lists exactly 2 tools.
+    // /mcp/public without a token → 200, lists exactly 3 tools.
     const r200 = await fetchJson('/mcp/public');
     if (r200.status !== 200) {
       console.error('DEBUG /mcp/public', r200.status, 'ct=', r200.ct, 'text=', r200.text.slice(0, 400));
@@ -155,13 +174,12 @@ test('/mcp/public responds without a token (tools/list shows exactly the public 
     const names = listed.map((t) => t.name).sort();
     assert.deepEqual(
       names,
-      ['get_career_packet', 'get_story_bank_public'],
-      'external surface must list exactly the two public tools',
+      ['get_career_packet', 'get_career_packet_json', 'get_story_bank_public'],
+      'external surface must list exactly the three public tools',
     );
-
-    await new Promise((resolve) => server.close(() => resolve()));
   } finally {
     cfgAny.authPolicy = origAuth;
+    if (server) await new Promise((resolve) => server.close(() => resolve()));
   }
 });
 
