@@ -216,8 +216,12 @@ class NoneEmbedder implements EmbeddingProvider {
 /**
  * Break a career packet into sections and embed each one.
  *
- * Sections:
- *   - 'full': the entire packet as a single string
+ * Sections (ordered; the broadcast path treats element 0 as the canonical
+ * "whole packet" vector — see signal_broadcast.ts / Canonical Federation
+ * Contract v1):
+ *   - '__packet__' — the entire packet as a single string. This is the
+ *     vector HireBridge's /ingest/snapshot stores at embedding[0]; the rest
+ *     of the sections are informational. Cached under the same key.
  *   - 'summary': basics.summary + basics.headline
  *   - 'skills': all skill names joined
  *   - 'work_0', 'work_1', ...: each work experience (bullets joined)
@@ -238,9 +242,13 @@ export async function embedPacket(packet: CareerPacketJson): Promise<EmbeddingRe
   const packetStr = JSON.stringify(packet, null, 2);
   const packet_hash = sha256(packetStr);
 
-  // Break into sections
+  // Break into sections. The first key '__packet__' MUST be a single vector
+  // covering the whole packet — HireBridge indexes embedding[0] by it.
   const sections = breakIntoSections(packet);
   const sectionNames = Object.keys(sections);
+  if (sectionNames[0] !== '__packet__') {
+    throw new Error(`Internal: first section must be '__packet__', got '${sectionNames[0]}'`);
+  }
 
   // Check cache
   const db = getDb();
@@ -290,7 +298,7 @@ export async function embedPacket(packet: CareerPacketJson): Promise<EmbeddingRe
     }
   }
 
-  // Build result
+  // Build result in the original section order (so __packet__ is first).
   const resultSections = sectionNames.map((section) => ({
     section,
     embedding: cachedMap.get(section)!,
@@ -310,10 +318,13 @@ export async function embedPacket(packet: CareerPacketJson): Promise<EmbeddingRe
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function breakIntoSections(packet: CareerPacketJson): Record<string, string> {
+  // Ordered sections: __packet__ MUST be first — the broadcast path picks
+  // section[0] as the canonical whole-packet vector that HireBridge indexes.
+  // Renaming the key without keeping first would silently break /ingest/snapshot.
   const sections: Record<string, string> = {};
 
-  // Full packet
-  sections['full'] = JSON.stringify(packet);
+  // Whole-packet vector (broadcast uses this as embedding[0]).
+  sections['__packet__'] = JSON.stringify(packet);
 
   // Summary
   const summaryParts = [packet.basics.headline, packet.basics.summary].filter(Boolean);

@@ -481,7 +481,68 @@ no exclamation marks, no clichés. A failing draft is returned with the offendin
 
 ---
 
-## 12. Two edit directions (drift is now guarded, not a trap)
+## 12. Federation contract v1 (shared with hirebridge + LivingCV)
+
+jobops, hirebridge (central router), and LivingCV (personal relay) implement
+the **Canonical Federation Contract v1** — the same auth flow, envelope, and
+signature scheme, frozen in `plans_fixes_federation_interop.md`. The three
+main invariants:
+
+**Identity** — `candidate_id` = first 32 hex chars of `sha256(lowercase(trim(operator_email)))`.
+jobops derives it from `federation_state.hirebridge_email` / `JOBOPS_HIREBRIDGE_EMAIL`.
+Same function on every repo so signatures correlate.
+
+**HireBridge device auth (one-time, per node).** jobops generates an ed25519
+keypair on first connect and persists it in `federation_state` (cols added
+by migration 008; never in the packet):
+
+1. `POST /auth/device`   JSON `{node_type, endpoint_url, public_key}` →
+                         `{device_code, user_code, verification_uri, …}`
+2. `POST /auth/request`  form-encoded `email=<you>&uc=<user_code>` →
+                         HireBridge emails the magic link.
+3. `POST /auth/token`    form-encoded `grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=…`.
+                         Pending states return **HTTP 400 + JSON** (not 2xx) — the
+                         poller reads the body on every response, including 400s,
+                         and switches on `authorization_pending` / `slow_down` /
+                         `expired_token` / `access_denied`.
+
+The success body carries `{access_token, node_id, email}` — jobops persists
+the token to `.env` and `node_id` to `federation_state`.
+
+**Snapshot broadcast.** `POST /ingest/snapshot` with envelope
+`{candidate_id, payload, embedding, signature}`:
+- `payload` = public-safe compiled packet + `candidate: {email, livingcv_url}` +
+  `capabilities` + `packet_hash` + `packet_version` + `broadcast_at`.
+- `signature` = **ed25519** over `JSON.stringify(payload)` bytes (NOT HMAC).
+  The same object instance is used for both serialization and signing, so
+  V8 preserves key order; the server's `json.RawMessage` keeps the bytes
+  intact for verification.
+- `embedding[0]` = whole-packet vector (section `__packet__`). HireBridge
+  indexes only element 0 — per-section vectors are ignored at storage.
+- Dim mismatch refuses the broadcast before sending (no garbage in the index).
+
+**LivingCV packet sync.** MCP-over-SSE, not bare JSON-RPC:
+- `SSEClientTransport` against `${JOBOPS_LIVINGCV_URL}/mcp-admin/sse`,
+  `Authorization: Bearer ${JOBOPS_LIVINGCV_TOKEN}` on both the SSE GET and
+  the message POSTs.
+- `JOBOPS_LIVINGCV_TOKEN` is LivingCV's **`mcp.master_key`** (Admin →
+  Settings → MCP), **not** a user JWT.
+- Tool: `sync_career_packet` with arguments `{packet: <LcvPacket>}` (the
+  mapped shape — see `src/core/livingcv_packet_map.ts`).
+- Preconditions on the LivingCV side: `mcp.enabled = 1` and
+  `mcp.jobops_sync_enabled = 1`. If a sync fails because of those, the error
+  message names both flags so the user knows exactly where to look.
+
+**Where the pieces live in this repo:**
+- Keypair gen + persistence + RFC 8628 polling + envelope transport → `src/core/hirebridge_client.ts`.
+- Snapshot compiler + ed25519 signature + dim guard → `src/core/signal_broadcast.ts`.
+- LivingCV packet mapper (`CareerPacketJson → LcvPacket`) → `src/core/livingcv_packet_map.ts`.
+- MCP-over-SSE `sync_career_packet` call → `src/core/livingcv_client.ts`.
+- Whole-packet embedding in `__packet__` section → `src/core/embeddings.ts`.
+
+---
+
+## 13. Two edit directions (drift is now guarded, not a trap)
 
 The DB `career_packet` is **runtime state**; `cv.md` + `config/profile.yml` (+ the
 `modes/career_packet.md` template) are the **file source of truth**. You can edit from

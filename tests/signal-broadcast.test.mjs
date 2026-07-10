@@ -70,7 +70,7 @@ test('compileSignalSnapshot throws when no embeddings cached', async () => {
 
   await assert.rejects(
     () => compileSignalSnapshot(),
-    /No cached embeddings found/,
+    /No cached embeddings/,
   );
 });
 

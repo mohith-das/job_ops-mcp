@@ -678,7 +678,7 @@ async function cmdConnectToHireBridge(flags: Map<string, string | boolean>) {
   console.log(c.dim('Authenticate with HireBridge via magic link.\n'));
 
   try {
-    const { initiateDeviceAuth, pollForToken, writeHireBridgeTokenToEnv, updateFederationState } = await import('./core/hirebridge_client.js');
+    const { initiateDeviceAuth, requestEmailMagicLink, pollForToken, persistConnection, loadOrCreateIdentity } = await import('./core/hirebridge_client.js');
     const { createInterface } = await import('node:readline/promises');
     const { stdin, stdout } = await import('node:process');
 
@@ -695,31 +695,49 @@ async function cmdConnectToHireBridge(flags: Map<string, string | boolean>) {
       process.exit(1);
     }
 
-    console.log(`\n  ${c.dim('Sending magic link to')} ${c.bold(email)}...`);
+    console.log(`\n  ${c.dim('Generating ed25519 identity for this node...')}`);
+    const identity = loadOrCreateIdentity();
+    console.log(`  ${c.dim('Public key:')} ${c.dim(identity.public_key.slice(0, 16))}... (64-char hex, sent to HireBridge)`);
 
-    // Initiate device auth
-    const deviceAuth = await initiateDeviceAuth(email);
+    console.log(`\n  ${c.dim('Requesting device code from HireBridge...')}`);
 
-    console.log(`  ${c.dim('Magic link sent. Check your email.')}`);
-    console.log(`  ${c.dim('Verification URI:')} ${c.bold(deviceAuth.verification_uri)}`);
+    // Initiate device auth — sends {node_type, endpoint_url, public_key}
+    const deviceAuth = await initiateDeviceAuth();
+
+    console.log(`  ${tick()} Device code issued (expires in ${deviceAuth.expires_in}s)`);
     console.log(`  ${c.dim('User code:')} ${c.bold(deviceAuth.user_code)}`);
-    console.log(`\n  ${c.dim('Waiting for approval...')} ${c.dim(`(expires in ${deviceAuth.expires_in}s)`)}\n`);
+    console.log(`  ${c.dim('Verification page:')} ${c.bold(deviceAuth.verification_uri)}`);
 
-    // Poll for token
+    // Ask HireBridge to email the magic link. We also print the complete URI
+    // as a fallback so users without email access can still approve.
+    try {
+      await requestEmailMagicLink(email, deviceAuth.user_code);
+      console.log(`  ${tick()} ${c.green('Magic link emailed to')} ${c.bold(email)}`);
+    } catch (e: any) {
+      console.log(`  ${warn()} ${c.yellow('Could not email magic link')} — ${e?.message ?? e}`);
+      console.log(`  ${c.dim('Use the verification URL below instead (open it in any browser):')}`);
+    }
+    if (deviceAuth.verification_uri_complete) {
+      console.log(`  ${c.dim('Direct approval URL:')} ${c.bold(deviceAuth.verification_uri_complete)}`);
+    }
+
+    console.log(`\n  ${c.dim('Waiting for approval...')} ${c.dim(`(polling every ${deviceAuth.interval}s)`)}\n`);
+
+    // Poll for token — handles RFC 8628 400-body codes (authorization_pending / slow_down / ...).
     const tokenResponse = await pollForToken(
       deviceAuth.device_code,
       deviceAuth.interval,
       deviceAuth.expires_in,
     );
 
-    // Write to .env
-    writeHireBridgeTokenToEnv(tokenResponse.access_token, tokenResponse.email, process.env.JOBOPS_PROJECT_ROOT!);
+    // Persist token + email + node_id to .env + federation_state.
+    persistConnection(tokenResponse.access_token, email, tokenResponse.node_id, process.env.JOBOPS_PROJECT_ROOT!);
 
-    // Update federation state
-    await updateFederationState(tokenResponse.email);
-
-    console.log(`  ${tick()} ${c.green('Connected to HireBridge as')} ${c.bold(tokenResponse.email)}`);
+    console.log(`  ${tick()} ${c.green('Connected to HireBridge as')} ${c.bold(email)}`);
     console.log(`  ${tick()} Token saved to .env (JOBOPS_HIREBRIDGE_TOKEN)`);
+    if (tokenResponse.node_id) {
+      console.log(`  ${tick()} Node id: ${c.dim(tokenResponse.node_id)}`);
+    }
     console.log('');
     console.log(c.dim('  Next: run `jobops broadcast` to push signal to HireBridge.'));
     console.log('');

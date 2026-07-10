@@ -310,8 +310,8 @@ roles where sponsorship is a non-issue — turn it off; the rest of the system w
 | `JOBOPS_LLM_MODEL` | _empty_ | Provider-specific model id |
 | `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` | _empty_ | Provider credentials — needed for `api`/batch scoring unless your client supports MCP sampling (most don't; `mode="chat"` never needs a key) |
 | `JOBOPS_SCHEDULER_ENABLED` | `false` | Whether opt-in cron runs at all |
-| `JOBOPS_LIVINGCV_URL` | `http://127.0.0.1:7890` | LivingCV Master Relay base URL for career packet sync |
-| `JOBOPS_LIVINGCV_TOKEN` | _empty_ | Bearer token for LivingCV Master Relay authentication |
+| `JOBOPS_LIVINGCV_URL` | _empty_ | LivingCV base URL (no default — set to your deployed LivingCV, e.g. `https://jobs.example.com`) |
+| `JOBOPS_LIVINGCV_TOKEN` | _empty_ | LivingCV **Master Relay** bearer key (Admin → Settings → MCP → `mcp.master_key`) |
 | `JOBOPS_HIREBRIDGE_URL` | `https://api.hirebridge.io` | HireBridge central router base URL for signal broadcast |
 | `JOBOPS_HIREBRIDGE_TOKEN` | _empty_ | Bearer token for HireBridge (set by `connect_to_hirebridge`) |
 | `JOBOPS_HIREBRIDGE_EMAIL` | _empty_ | Email associated with HireBridge connection |
@@ -766,13 +766,28 @@ generated locally by default.
 cv.md + profile.yml + story_bank
     ↓ compile_career_packet
 career-packet.json (JSON Resume superset + Lightcast IDs + evidence)
-    ↓ sync_to_livingcv
-LivingCV (canonical store)
+    ↓ sync_to_livingcv (MCP SSE → sync_career_packet {packet})
+LivingCV (canonical store — own /career-packet.json route)
     ↓ generate_embeddings
-local vectors (cached by packet hash)
-    ↓ broadcast_signal
-HireBridge router (signed snapshot)
+local vectors (cached by packet hash; __packet__ first)
+    ↓ broadcast_signal (POST /ingest/snapshot, ed25519-signed)
+HireBridge router (signed snapshot — `embedding[0]` is the only one indexed)
 ```
+
+### Federation contract v1 (shared with hirebridge + LivingCV)
+
+jobops implements the **Canonical Federation Contract v1** — the same envelope,
+auth flow, and signature scheme the other two repos use. Key invariants:
+
+- `candidate_id` = first 32 hex chars of `sha256(lowercase(trim(email)))`.
+- Every snapshot is signed with **ed25519**, not HMAC. jobops generates the
+  keypair on first connect and persists it in `federation_state`; the
+  `public_key` is registered with HireBridge at `/auth/device` time.
+- The whole-packet embedding **must** be `embedding[0]` — HireBridge indexes
+  only element 0 (`hirebridge/internal/store/repo/snapshots.go:45-57`).
+- LivingCV sync is **MCP-over-SSE**, not bare JSON-RPC. The bearer token is
+  LivingCV's `mcp.master_key` (Admin → Settings → MCP). The tool name is
+  `sync_career_packet` with arguments `{packet: <LcvPacket>}`.
 
 ### CLI commands
 
@@ -785,7 +800,7 @@ jobops compile-packet --skip-lightcast   # skip Lightcast mapping (faster)
 jobops sync                              # push to LivingCV
 jobops sync --force                      # push even if content unchanged
 
-# Authenticate with HireBridge (magic link flow)
+# Authenticate with HireBridge via magic link
 jobops connect_to_hirebridge             # prompts for email
 jobops connect_to_hirebridge --email you@example.com
 
@@ -802,26 +817,40 @@ jobops update
 |------|-------------|
 | `compile_career_packet` | Compile cv.md + profile.yml + story_bank into `career-packet.json` (JSON Resume superset with Lightcast Open Skills IDs). Persists to DB + writes `output/career-packet.json`. |
 | `get_career_packet_json` | Get the active compiled career packet (read-only, **public-safe**). |
-| `sync_to_livingcv` | Push the compiled career packet to LivingCV via JSON-RPC. Requires `JOBOPS_LIVINGCV_TOKEN`. |
-| `generate_embeddings` | Generate vector embeddings of career packet sections using the configured provider (local, OpenAI, or Voyage). Cached by packet hash. |
+| `sync_to_livingcv` | Push the compiled career packet to LivingCV via **MCP SSE** (tool `sync_career_packet {packet}`). Requires `JOBOPS_LIVINGCV_URL` + `JOBOPS_LIVINGCV_TOKEN`. |
+| `generate_embeddings` | Generate vector embeddings of career packet sections using the configured provider (local, OpenAI, or Voyage). Cached by packet hash. The `__packet__` section is the canonical whole-packet vector broadcast at `embedding[0]`. |
 | `get_embeddings` | Get cached embedding metadata (sections, model, dim) without the vector data. Read-only. |
-| `broadcast_signal` | Compile and broadcast a signed snapshot (embeddings + capabilities + LivingCV URL) to HireBridge. Signed with HMAC-SHA256. |
+| `broadcast_signal` | Compile and broadcast a signed snapshot to `POST /ingest/snapshot`. Envelope is `{candidate_id, payload, embedding, signature}`; signature is **ed25519** over the exact payload bytes (NOT HMAC). |
 | `get_federation_status` | Get federation state: LivingCV sync time, HireBridge connection status, cached embedding count, broadcast history. Read-only. |
 | `update_jobops` | Check npm registry for updates. Reports the update command if a newer version is available. |
 
-### HireBridge magic link flow
+### HireBridge device-auth + magic link flow
 
 ```
 1. jobops connect_to_hirebridge
-2. Enter your email → magic link sent
-3. Click the link in your email
-4. 🟢 Connected to HireBridge as you@example.com
-5. Token saved to .env (JOBOPS_HIREBRIDGE_TOKEN)
+2. Enter your email
+3. jobops → POST /auth/device  JSON {node_type:"jobops", endpoint_url, public_key}
+                                  ← {device_code, user_code, verification_uri, …}
+4. jobops → POST /auth/request  form-encoded email=<you>&uc=<user_code>
+                                  → HireBridge emails the magic link
+5. Click the magic link in your email (or open verification_uri_complete)
+6. jobops → POST /auth/token  form-encoded grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=…
+                                  ← 200 {access_token, node_id, email}
+7. Token + node_id saved to .env + federation_state
 ```
 
-The token is a long-lived bearer token stored in `.env`. HireBridge's device auth API:
-- `POST /auth/device` — sends magic link
-- `POST /auth/token` — polls for approval (handles `authorization_pending`, `slow_down`, `expired_token`)
+Per [RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628), pending states
+return **HTTP 400** with a JSON `{error: …}` body. The polling loop in jobops
+reads the body on **every** response (including 400s) and switches on
+`authorization_pending`, `slow_down`, `expired_token`, and `access_denied`.
+Throwing on non-2xx would abort the very first poll — this was a real v0.16.x
+bug; the v1 client is correct.
+
+The bearer token is a long-lived token stored in `.env` (`JOBOPS_HIREBRIDGE_TOKEN`).
+jobops **never** stores the bearer in the career packet and never sends it on
+snapshots — snapshots are signed with ed25519 against the locally-stored
+private key (the server verifies with the `public_key` registered at device
+init).
 
 ### Embedding providers
 
@@ -844,24 +873,44 @@ broadcast_signal                  # Step 5: broadcast signed signal
 get_federation_status             # Check sync/broadcast state
 ```
 
-### Signal snapshot shape
+### Signal snapshot shape (contract v1)
 
 ```json
 {
-  "schema": "jobops-signal-1.0",
-  "candidate": { "email": "...", "livingcv_url": "..." },
-  "packet_hash": "sha256...",
-  "packet_version": 3,
-  "embeddings": { "model": "all-MiniLM-L6-v2", "dim": 384, "sections": [...] },
-  "capabilities": [{ "competency": "leadership", "evidence_count": 3, "story_ids": [...] }],
-  "broadcast_at": "2026-07-08T...",
-  "signature": "hmac-sha256(token, canonical_json)"
+  "candidate_id": "8a3f... (32-hex, sha256(lowercase(email))[:16] bytes)",
+  "payload": {
+    "candidate":     { "email": "...", "livingcv_url": "..." },
+    "career_packet": { /* public-safe compiled packet — the same blob get_career_packet_json returns */ },
+    "capabilities":  [{ "competency": "leadership", "evidence_count": 3, "story_ids": ["..."] }],
+    "packet_hash":   "sha256...",
+    "packet_version": 3,
+    "broadcast_at":  "2026-07-10T..."
+  },
+  "embedding":  [ [/* __packet__ vector — dim matches HB_EMBED_DIM, default 384 */], [...per-section vectors] ],
+  "signature":  "ed25519 hex over JSON.stringify(payload) bytes"
 }
 ```
 
-The signature proves the snapshot came from the authenticated user without exposing the
-HireBridge token. The snapshot includes only the **signal** (embeddings + competency
-counts) — never raw resume text, story content, or PII.
+The signature is **ed25519**, keyed by the local keypair registered at
+`/auth/device` time. HireBridge recomputes it from the exact payload bytes
+and verifies against the stored `public_key`. Throwing HMAC at it would just
+be silently accepted as key-less — this is the v0.16.x failure mode the v1
+contract fixes.
+
+`embedding[0]` is the canonical whole-packet vector (section `__packet__` in
+the local cache). HireBridge's repo indexes only element 0 (see
+`hirebridge/internal/store/repo/snapshots.go:45-57`); per-section vectors may
+follow but are ignored at storage time.
+
+### LivingCV sync preconditions
+
+The LivingCV stack must have these Admin → Settings → MCP flags enabled or
+`sync_to_livingcv` returns 401/403:
+- `mcp.enabled = 1`
+- `mcp.jobops_sync_enabled = 1`
+
+`JOBOPS_LIVINGCV_TOKEN` is the **master-relay key** (`mcp.master_key` in
+LivingCV Admin → Settings → MCP) — it carries the jobops-sync scope.
 
 > **Public-safe surface:** `get_career_packet_json` is marked `publicSafe`, meaning it's
 > available on the `/mcp/public` endpoint for external recruiter-side AI agents. It returns
