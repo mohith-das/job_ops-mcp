@@ -79,6 +79,11 @@ import { applyPrefillTool } from './tools/apply_prefill.js';
 
 // G9 — scheduler
 import { schedulerStatusTool, schedulerEnableTool, schedulerDisableTool } from './tools/scheduler.js';
+import {
+  configureGithubSyncTool, syncGithubTool, setGithubAutoSyncTool, githubSyncStatusTool, listGithubRepositoriesTool,
+  updateGithubRepositoryTool, listGithubProposalsTool, approveGithubProposalTool,
+  rejectGithubProposalTool,
+} from './tools/github_sync.js';
 
 // G10 — federation (career-packet.json, LivingCV sync, embeddings, HireBridge)
 import { compileCareerPacketTool, getCareerPacketJsonTool } from './tools/career_packet_json.js';
@@ -110,6 +115,8 @@ const FULL_TOOLSET: AnyToolDef[] = [
   doctorTool,
   applyPrefillTool,
   schedulerStatusTool, schedulerEnableTool, schedulerDisableTool,
+  configureGithubSyncTool, syncGithubTool, setGithubAutoSyncTool, githubSyncStatusTool, listGithubRepositoriesTool,
+  updateGithubRepositoryTool, listGithubProposalsTool, approveGithubProposalTool, rejectGithubProposalTool,
   compileCareerPacketTool, getCareerPacketJsonTool,
   generateEmbeddingsTool, getEmbeddingsTool,
   syncToLivingCVTool,

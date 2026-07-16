@@ -172,7 +172,7 @@ export function packetStatus(args: {
   if (!args.active) return 'no_packet';
   // Chat-edited packets are intentionally ahead of cv.md — that's the chat-driven workflow,
   // NOT a staleness problem. This dominates the cv.md-hash check so doctor stops nagging.
-  if (args.active.origin === 'chat_edit') return 'packet_chat_edited';
+  if (args.active.origin === 'chat_edit' || args.active.origin === 'github_sync') return 'packet_chat_edited';
   if (!args.cvMd)   return 'no_cv';
   if (!cvHasRealContent(args.cvMd)) return 'cv_is_example';
   // cv has real content — now check it matches what we built the packet from.
@@ -185,7 +185,7 @@ export function packetStatus(args: {
 
 // ── Active-packet accessor ──────────────────────────────────────────────────
 
-export type PacketOrigin = 'seed' | 'reseed' | 'chat_edit';
+export type PacketOrigin = 'seed' | 'reseed' | 'chat_edit' | 'github_sync';
 
 export function getActiveCareerPacket(): {
   id: string; version: number; content: string; source_cv_hash: string | null; origin: PacketOrigin;
@@ -250,7 +250,7 @@ export async function seedCareerPacketFromFiles(
   // Non-destructive guard: never overwrite chat edits without an explicit force.
   if (mode === 'reseed' && !opts.force) {
     const active = getActiveCareerPacket();
-    if (active?.origin === 'chat_edit') {
+    if (active?.origin === 'chat_edit' || active?.origin === 'github_sync') {
       return {
         version: active.version, created: false, reused: false,
         blocked: true,
@@ -315,6 +315,25 @@ export async function writeChatEditedPacket(
       INSERT INTO career_packet (id, version, content, taglines, is_active, source_cv_hash, notes, origin)
       VALUES (?, ?, ?, NULL, 1, NULL, ?, 'chat_edit')
     `).run(id, newV, content, notes ?? 'chat edit via update_career_packet');
+    return { version: newV };
+  });
+  return { id, version: result.version, bytes: content.length };
+}
+
+/** Write an approved, public-GitHub-derived packet as a new auditable version. */
+export async function writeGitHubEditedPacket(
+  content: string, notes: string,
+): Promise<{ id: string; version: number; bytes: number }> {
+  const db = getDb();
+  const id = randomUUID();
+  const result = await runInWriteLock(() => {
+    const lastV = (db.prepare(`SELECT COALESCE(MAX(version), 0) AS v FROM career_packet`).get() as any).v as number;
+    const newV = lastV + 1;
+    db.prepare(`UPDATE career_packet SET is_active = 0 WHERE is_active = 1`).run();
+    db.prepare(`
+      INSERT INTO career_packet (id, version, content, taglines, is_active, source_cv_hash, notes, origin)
+      VALUES (?, ?, ?, NULL, 1, NULL, ?, 'github_sync')
+    `).run(id, newV, content, notes);
     return { version: newV };
   });
   return { id, version: result.version, bytes: content.length };
@@ -602,7 +621,9 @@ function replaceSectionBody(content: string, prefix: string, newBody: string): s
   // Match the heading line (## N. ...) and capture everything after it until the next
   // `## ` heading or end-of-document. We anchor the prefix to start-of-line.
   const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(^## ${escaped}[^\\n]*\\n)([\\s\\S]*?)(?=^## |\\z)`, 'm');
+  // JavaScript has no `\\z` end-of-string anchor. `(?![\\s\\S])` is an explicit
+  // end-of-input assertion that works alongside multiline `^## ` boundaries.
+  const re = new RegExp(`(^## ${escaped}[^\\n]*\\n)([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm');
   if (!re.test(content)) return content;        // section not in template — leave content alone
   return content.replace(re, (_match, heading) => `${heading}\n${newBody.trim()}\n\n`);
 }

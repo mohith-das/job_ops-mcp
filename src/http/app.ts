@@ -17,6 +17,8 @@ import { mountElicit } from './elicit.js';
 import {
   setJobStatus, trashJobs, restoreJobs, purgeJobs, JOB_STATUSES, type JobStatus,
 } from '../core/job_trash.js';
+import { reviewGithubProposal } from '../core/github_sync.js';
+import { getDb } from '../db.js';
 
 export function buildHttpApp(): Express {
   const app = express();
@@ -79,6 +81,21 @@ export function buildHttpApp(): Express {
   // ── Tracker CRUD API — the UI calls these; they share core/job_trash.ts with the MCP
   // tools (one implementation). All are behind the same auth guard as the dashboard. ──
   app.get('/api/counts', (_req: Request, res: Response) => res.json(countsJson()));
+
+  app.get('/api/github/proposals/pending-count', (_req: Request, res: Response) => {
+    const row = getDb().prepare(`SELECT COUNT(*) AS n FROM github_cv_proposals WHERE status='pending'`).get() as { n: number };
+    res.json({ pending: row.n });
+  });
+
+  app.post('/api/github/proposals/:id/approve', async (req: Request, res: Response) => {
+    try { return res.json(await reviewGithubProposal(req.params.id, 'approve')); }
+    catch (error: any) { return res.status(400).json({ error: error?.message ?? String(error) }); }
+  });
+
+  app.post('/api/github/proposals/:id/reject', async (req: Request, res: Response) => {
+    try { return res.json(await reviewGithubProposal(req.params.id, 'reject')); }
+    catch (error: any) { return res.status(400).json({ error: error?.message ?? String(error) }); }
+  });
 
   // Server identity for the shared-topology check: uptime, DB path + fingerprint,
   // clients seen since boot. Auth-gated (mounted after the guard) — the DB path and

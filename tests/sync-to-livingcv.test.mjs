@@ -86,24 +86,55 @@ test('syncToLivingCV returns error when no URL configured (contract v1: URL is u
   }
 });
 
-test('syncToLivingCV returns error when no token configured', async () => {
+test('syncToLivingCV returns error when neither product sync nor legacy MCP is provisioned', async () => {
   const origToken = process.env.JOBOPS_LIVINGCV_TOKEN;
   const origUrl   = process.env.JOBOPS_LIVINGCV_URL;
   delete process.env.JOBOPS_LIVINGCV_TOKEN;
+  delete process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET;
   process.env.JOBOPS_LIVINGCV_URL = 'http://127.0.0.1:7891';  // URL is set, token is the missing piece
 
   try {
     const { syncToLivingCV } = await import('../dist/core/livingcv_client.js');
     const result = await syncToLivingCV(minimalPacket());
     assert.equal(result.ok, false);
-    assert.match(result.error, /JOBOPS_LIVINGCV_TOKEN is not set/);
+    assert.match(result.error, /product sync is not provisioned/);
     assert.ok(result.fix);
-    assert.match(result.fix, /master-relay|master_relay|masterKey|master_key|mcp\.master_key/i);
+    assert.match(result.fix, /INTERNAL_SECRET|legacy MCP/i);
   } finally {
     if (origToken !== undefined) process.env.JOBOPS_LIVINGCV_TOKEN = origToken;
     else                          delete process.env.JOBOPS_LIVINGCV_TOKEN;
     if (origUrl   !== undefined) process.env.JOBOPS_LIVINGCV_URL = origUrl;
     else                          delete process.env.JOBOPS_LIVINGCV_URL;
+  }
+});
+
+test('integrated product sync forwards the unified user approval without an MCP key', async () => {
+  const originalFetch = globalThis.fetch;
+  const origToken = process.env.JOBOPS_LIVINGCV_TOKEN;
+  const origSecret = process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET;
+  const origUrl = process.env.JOBOPS_LIVINGCV_URL;
+  delete process.env.JOBOPS_LIVINGCV_TOKEN;
+  process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET = 'service-provisioned-secret';
+  process.env.JOBOPS_LIVINGCV_URL = 'http://livingcv.internal';
+  let received;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), 'http://livingcv.internal/api/internal/jobops-sync');
+    assert.equal(init.headers['x-jobops-sync-secret'], 'service-provisioned-secret');
+    received = JSON.parse(init.body);
+    return Response.json({ stored: true, approved: true, published: 1 });
+  };
+  try {
+    const { syncToLivingCV } = await import('../dist/core/livingcv_client.js');
+    const result = await syncToLivingCV(minimalPacket(), false, { approvedByUser: true, proposalId: 'proposal-123' });
+    assert.equal(result.ok, true);
+    assert.equal(received.approved_by_user, true);
+    assert.equal(received.proposal_id, 'proposal-123');
+    assert.equal(received.packet.identity.fullName, 'Test');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (origToken === undefined) delete process.env.JOBOPS_LIVINGCV_TOKEN; else process.env.JOBOPS_LIVINGCV_TOKEN = origToken;
+    if (origSecret === undefined) delete process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET; else process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET = origSecret;
+    if (origUrl === undefined) delete process.env.JOBOPS_LIVINGCV_URL; else process.env.JOBOPS_LIVINGCV_URL = origUrl;
   }
 });
 

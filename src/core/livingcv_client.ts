@@ -59,6 +59,10 @@ export function resolveLivingCVToken(): string | null {
   return raw || null;
 }
 
+function resolveInternalSyncSecret(): string | null {
+  return (process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET ?? '').trim() || null;
+}
+
 // ── Sync function ─────────────────────────────────────────────────────────────
 
 /**
@@ -73,6 +77,7 @@ export function resolveLivingCVToken(): string | null {
 export async function syncToLivingCV(
   packet: CareerPacketJson,
   _force: boolean = false,
+  approval?: { approvedByUser: boolean; proposalId: string },
 ): Promise<SyncResult> {
   const livingcvUrl = resolveLivingCVBaseUrl();
   if (!livingcvUrl) {
@@ -88,17 +93,17 @@ export async function syncToLivingCV(
     };
   }
 
+  const internalSecret = resolveInternalSyncSecret();
   const livingcvToken = resolveLivingCVToken();
-  if (!livingcvToken) {
+  if (!internalSecret && !livingcvToken) {
     return {
       ok: false,
       livingcv_url: livingcvUrl,
       packet_version: packet.meta.version,
       content_hash: '',
-      error: 'JOBOPS_LIVINGCV_TOKEN is not set.',
+      error: 'LivingCV product sync is not provisioned.',
       fix:
-        'Set JOBOPS_LIVINGCV_TOKEN in .env to LivingCV\'s master-relay bearer key. ' +
-        'You can find it under Admin → Settings → MCP → mcp.master_key.',
+        'Provision JOBOPS_LIVINGCV_INTERNAL_SECRET for the integrated product, or configure the legacy MCP token.',
     };
   }
 
@@ -123,6 +128,20 @@ export async function syncToLivingCV(
 
   let response: any;
   try {
+    if (internalSecret) {
+      const result = await fetch(`${livingcvUrl}/api/internal/jobops-sync`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-jobops-sync-secret': internalSecret },
+        body: JSON.stringify({
+          packet: lcv,
+          approved_by_user: approval?.approvedByUser === true,
+          proposal_id: approval?.proposalId,
+        }),
+      });
+      const payload = await result.json().catch(() => ({}));
+      if (!result.ok) throw new Error(`LivingCV internal sync returned ${result.status}: ${JSON.stringify(payload)}`);
+      response = payload;
+    } else {
     const sseUrl = new URL(`${livingcvUrl}/mcp-admin/sse`);
     const authHeaders = { authorization: `Bearer ${livingcvToken}` };
 
@@ -150,6 +169,7 @@ export async function syncToLivingCV(
     } finally {
       try { await transport.close(); } catch { /* best-effort */ }
       try { await client.close();   } catch { /* best-effort */ }
+    }
     }
   } catch (e: any) {
     const msg = String(e?.message ?? e);

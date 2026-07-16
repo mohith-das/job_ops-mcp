@@ -42,8 +42,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && npm run copy-assets",
-    "copy-assets": "node -e \"const{cpSync,existsSync,mkdirSync}=require('fs');mkdirSync('dist/migrations',{recursive:true});cpSync('src/migrations','dist/migrations',{recursive:true});\"",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && npm run copy-assets",
+    "copy-assets": "node -e \"const{cpSync,mkdirSync}=require('fs');mkdirSync('dist/migrations',{recursive:true});cpSync('src/migrations','dist/migrations',{recursive:true});\"",
     "start": "node dist/cli.js start",
     "init": "node dist/cli.js init",
     "doctor": "node dist/cli.js doctor",

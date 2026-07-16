@@ -50,6 +50,12 @@ function styles(): string {
   .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; gap: 1rem; flex-wrap: wrap; }
   .banner { background: var(--bg-soft); border: 1px solid var(--border); border-left: 3px solid var(--accent);
             border-radius: 4px; padding: 0.7rem 0.9rem; font-size: 0.85rem; color: var(--text-2); margin-bottom: 1rem; }
+  .github-alert { background: var(--bg-card); border: 2px solid var(--accent); border-radius: 4px; padding: 1rem;
+                  margin-bottom: 1.2rem; box-shadow: var(--shadow); }
+  .github-alert h2 { margin: 0 0 0.35rem; color: var(--accent); font-size: 1.05rem; }
+  .github-alert > p { margin: 0 0 0.8rem; color: var(--text-2); }
+  .github-proposal { border-top: 1px solid var(--border-soft); padding: 0.75rem 0; font-size: 0.86rem; }
+  .github-actions { margin-top: 0.55rem; display: flex; gap: 0.4rem; flex-wrap: wrap; }
   td.actions { white-space: nowrap; } td.actions button + button { margin-left: 0.3rem; }
   .filters { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; padding: 0.8rem 0.9rem;
              margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.6rem 0.9rem; align-items: flex-end; box-shadow: var(--shadow); }
@@ -83,6 +89,25 @@ const tier = (s: number | null) => {
 
 function trashedCount(): number {
   return (getDb().prepare(`SELECT COUNT(*) AS n FROM jobs WHERE trashed_at IS NOT NULL`).get() as { n: number }).n;
+}
+
+interface PendingGithubProposal {
+  id: string;
+  full_name: string;
+  source_url: string;
+  packet_diff: string;
+  confidence: number;
+  created_at: string;
+}
+
+function pendingGithubProposals(): PendingGithubProposal[] {
+  return getDb().prepare(`
+    SELECT p.id, r.full_name, p.source_url, p.packet_diff, p.confidence, p.created_at
+    FROM github_cv_proposals p
+    JOIN github_repositories r ON r.github_repo_id = p.github_repo_id
+    WHERE p.status = 'pending'
+    ORDER BY p.created_at DESC
+  `).all() as PendingGithubProposal[];
 }
 
 export const COUNT_CARDS: Array<[label: string, key: string]> = [
@@ -144,6 +169,7 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
   const p = parseParams(raw);
   const counts = pipelineCounts();
   const trashN = trashedCount();
+  const githubProposals = pendingGithubProposals();
 
   const result = queryTracker({
     statuses: p.statuses.length ? p.statuses : undefined,
@@ -157,6 +183,21 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
 
   const cardsHtml = COUNT_CARDS.map(([label, key]) =>
     `<div class="card"><div class="n" data-count="${key}">${(counts as any)[key] ?? 0}</div><div class="lbl">${label}</div></div>`).join('');
+
+  const githubAlert = githubProposals.length ? `
+  <section class="github-alert" aria-live="polite" data-github-pending="${githubProposals.length}">
+    <h2>GitHub found ${githubProposals.length} proposed CV update${githubProposals.length === 1 ? '' : 's'}. Review now.</h2>
+    <p>Nothing changes in your JobOps CV or LivingCV until you approve.</p>
+    ${githubProposals.map(proposal => `
+      <article class="github-proposal" data-proposal-id="${escapeHtml(proposal.id)}">
+        <div><strong>${escapeHtml(proposal.full_name)}</strong> <span class="muted">confidence ${proposal.confidence}% · ${escapeHtml(proposal.created_at.slice(0, 16))}</span></div>
+        <div>${escapeHtml(proposal.packet_diff)} · <a href="${escapeHtml(proposal.source_url)}" target="_blank" rel="noopener">view public source</a></div>
+        <div class="github-actions">
+          <button class="act github-approve" data-id="${escapeHtml(proposal.id)}">Approve and update JobOps + LivingCV</button>
+          <button class="act danger github-reject" data-id="${escapeHtml(proposal.id)}">Reject</button>
+        </div>
+      </article>`).join('')}
+  </section>` : '';
 
   const statusOptions = JOB_STATUSES.map(s =>
     `<option value="${s}"${p.statuses.includes(s) ? ' selected' : ''}>${s}</option>`).join('');
@@ -228,6 +269,7 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
   <span class="meta">${counts.total ?? 0} active · <a href="/trash">trash (${trashN})</a> · /files from output/</span>
 </header>
 <main>
+  ${githubAlert}
   <div class="cards">${cardsHtml}</div>
   ${filters}
   <div class="toolbar">
@@ -249,6 +291,7 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
 
   const baseUrl = qs(p);
   const script = `
+  const INITIAL_GITHUB_PENDING = ${githubProposals.length};
   const FORM = document.getElementById('filters');
   window.dlTex = function(e, urls) {
     e.preventDefault();
@@ -285,12 +328,34 @@ export function renderDashboard(raw: Record<string, unknown> = {}): string {
     refreshCounts();
   });
   document.addEventListener('click', async (e) => {
+    const approve = e.target.closest('button.github-approve');
+    if (approve) {
+      if (!confirm('Approve this GitHub proposal and update both JobOps CV and LivingCV?')) return;
+      approve.disabled = true;
+      try { await api('POST', '/api/github/proposals/' + approve.dataset.id + '/approve'); location.reload(); }
+      catch { approve.disabled = false; }
+      return;
+    }
+    const reject = e.target.closest('button.github-reject');
+    if (reject) {
+      if (!confirm('Reject this GitHub proposal? No CV will be changed.')) return;
+      reject.disabled = true;
+      try { await api('POST', '/api/github/proposals/' + reject.dataset.id + '/reject'); location.reload(); }
+      catch { reject.disabled = false; }
+      return;
+    }
     const b = e.target.closest('button.trash-btn'); if (!b) return;
     if (!confirm('Move to trash (recoverable): ' + b.dataset.label + '?')) return;
     await api('POST', '/api/jobs/' + b.dataset.id + '/trash');
     const tr = b.closest('tr'); tr.classList.add('removing'); setTimeout(() => tr.remove(), 250);
     bumpTotal(-1); refreshCounts();
-  });`;
+  });
+  setInterval(async () => {
+    try {
+      const result = await (await fetch('/api/github/proposals/pending-count')).json();
+      if (result.pending > INITIAL_GITHUB_PENDING) location.reload();
+    } catch {}
+  }, 60000);`;
 
   return shell('jobops tracker', body, script);
 }

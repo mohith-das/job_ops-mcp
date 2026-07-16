@@ -33,7 +33,7 @@ export const schedulerDisableTool = defineTool({
   description: 'Clears the enabled-jobs list. Process keeps running.',
   inputSchema: {},
   handler: async () => {
-    disableAll();
+    await disableAll();
     return okResult({ enabled: [], status: status() });
   },
   mutates: true,

@@ -115,7 +115,7 @@ without one.
 
 ---
 
-## Tools (58 — one MCP `tools/list` call away)
+## Tools (67 — one MCP `tools/list` call away)
 
 | Group | Tools |
 |---|---|
@@ -129,6 +129,7 @@ without one.
 | **Research** | `deep_research`, `enrich_company`, `daily_digest` |
 | **Profile + ops** | `get_career_packet`, `update_career_packet` (whole-doc), `edit_packet_item` / `remove_packet_item` (one bullet/project/skill/tagline), `restore_packet_version` (history + restore), `reseed_career_packet` (safe by default), `sync_packet_to_cv`, `update_profile` (elicitation), `cost_estimate`, `doctor` (read-only health) |
 | **Federation** | `compile_career_packet`, `get_career_packet_json` (public-safe), `sync_to_livingcv`, `generate_embeddings`, `get_embeddings`, `broadcast_signal`, `get_federation_status`, `update_jobops` |
+| **Public GitHub sync** | `configure_github_sync`, `sync_github`, `set_github_auto_sync`, `get_github_sync_status`, `list_github_repositories`, `update_github_repository_settings`, `list_github_cv_proposals`, `approve_github_cv_proposal`, `reject_github_cv_proposal` |
 | **Apply (preview only — never submits)** | `apply_prefill` |
 | **Visa (optional, can be hidden)** | `visa_signal`, `import_h1b`, `import_linkedin` |
 | **Scheduler (opt-in cron, off by default)** | `scheduler_status`, `scheduler_enable`, `scheduler_disable` |
@@ -141,6 +142,81 @@ tailoring_rules, outreach_tone, negotiation_playbook, career_packet — all load
 > checks as the `npx @mohith_das/jobops doctor` CLI command) covering packet ↔ cv.md sync state,
 > LLM provider/key, sampling + auth posture, active template, modes, visa scoring, and the
 > public base URL. Handy for "is my server wired right?" without leaving chat.
+
+---
+
+## Public GitHub → CV sync
+
+JobOps can poll a candidate's **public GitHub repositories** without requiring a GitHub
+App. Private and internal repositories are rejected before extraction and are never added
+to the GitHub evidence cache. GitHub changes create review proposals; they do not silently
+become resume claims.
+
+### Normal workflow
+
+The candidate does **not** need to call every GitHub MCP tool. Run the following once:
+
+```text
+configure_github_sync username="your-github-username"
+```
+
+Configuration does not start a scan and does not enable the scheduler. To check once
+immediately, run:
+
+```text
+sync_github
+```
+
+To opt into automatic checks every six hours, explicitly enable only the GitHub timer:
+
+```text
+set_github_auto_sync enabled=true
+```
+
+To stop future automatic GitHub checks without deleting repositories, proposals, or
+history:
+
+```text
+set_github_auto_sync enabled=false
+```
+
+When proposals are available:
+
+```text
+list_github_cv_proposals status="pending"
+approve_github_cv_proposal proposal_id="<proposal UUID>"
+```
+
+JobOps also shows a persistent dashboard alert: **“GitHub found N proposed CV
+updates. Review now.”** The dashboard provides Approve and Reject actions and checks
+for newly created proposals once per minute while it is open. An AI agent connected to
+the private JobOps MCP surface can list the same pending proposals and call
+`approve_github_cv_proposal` when the user says to approve. Dashboard and agent
+approvals use the same core operation: update the versioned JobOps packet, write
+`cv.md`, and immediately forward the user-approved packet to LivingCV.
+
+Or reject a proposal without changing the career packet or CV:
+
+```text
+reject_github_cv_proposal proposal_id="<proposal UUID>"
+```
+
+Approval creates a versioned career packet with origin `github_sync`, automatically writes
+the approved packet to `cv.md`, and syncs LivingCV when LivingCV is connected. The career
+packet remains saved even if a downstream `cv.md` or LivingCV sync fails.
+
+### Optional commands
+
+- `sync_github` — check GitHub immediately; it works while automatic scheduling is off.
+- `get_github_sync_status` — inspect the last sync, errors, and pending-proposal count.
+- `list_github_repositories` — inspect admitted public repositories.
+- `update_github_repository_settings` — include or exclude a repository from future proposals.
+- `set_github_auto_sync` — explicitly enable or disable the six-hour GitHub timer.
+- `scheduler_status` — verify whether `github_sync_6h` is enabled.
+
+For higher public API limits, set `JOBOPS_GITHUB_TOKEN` to a token that does **not** grant
+private-repository access. The token is optional; unauthenticated polling processes the 50
+most recently updated public repositories per run to stay below GitHub's public API limit.
 
 ---
 

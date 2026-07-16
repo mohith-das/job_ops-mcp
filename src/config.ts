@@ -169,6 +169,12 @@ export interface AppConfig {
    * Embedding model name. Default: 'all-MiniLM-L6-v2' for local provider.
    */
   embeddingModel: string;
+  githubUsername: string | null;
+  githubToken: string | null;
+  githubIncludeForks: boolean;
+  githubIncludeArchived: boolean;
+  githubAutoSyncCv: boolean;
+  githubAutoSyncLivingcv: boolean;
 }
 
 export function loadConfig(): AppConfig {
@@ -247,6 +253,12 @@ export function loadConfig(): AppConfig {
     hirebridgeEmail:    (process.env.JOBOPS_HIREBRIDGE_EMAIL ?? '').trim() || null,
     embeddingProvider:  (process.env.JOBOPS_EMBEDDING_PROVIDER || 'local').trim(),
     embeddingModel:     (process.env.JOBOPS_EMBEDDING_MODEL || 'all-MiniLM-L6-v2').trim(),
+    githubUsername:      (process.env.JOBOPS_GITHUB_USERNAME ?? '').trim() || null,
+    githubToken:         (process.env.JOBOPS_GITHUB_TOKEN ?? '').trim() || null,
+    githubIncludeForks:  envBool('JOBOPS_GITHUB_INCLUDE_FORKS', true),
+    githubIncludeArchived: envBool('JOBOPS_GITHUB_INCLUDE_ARCHIVED', false),
+    githubAutoSyncCv:    envBool('JOBOPS_GITHUB_AUTO_SYNC_CV', true),
+    githubAutoSyncLivingcv: envBool('JOBOPS_GITHUB_AUTO_SYNC_LIVINGCV', true),
   };
 }
 

@@ -17,6 +17,7 @@ import { closeBrowser } from './core/render.js';
 import { shutdownScanResources } from './core/scan_engine.js';
 import { setTransportMode } from './core/server_status.js';
 import { applyState as applySchedulerState, readEnabledJobs } from './core/scheduler.js';
+import { startHireBridgeHeartbeat } from './core/hirebridge_heartbeat.js';
 
 export interface BootOptions {
   stdio?: boolean;
@@ -113,11 +114,13 @@ export async function bootServer(opts: BootOptions = {}): Promise<void> {
     // eslint-disable-next-line no-console
     console.error(lines.join('\n'));
   });
+  const stopHeartbeat = startHireBridgeHeartbeat();
 
   const shutdown = async (signal: string) => {
     // eslint-disable-next-line no-console
     console.error(`\n[shutdown] ${signal} received`);
     server.close();
+    stopHeartbeat();
     await closeBrowser();
     await shutdownScanResources();
     process.exit(0);
@@ -132,6 +135,7 @@ export async function bootServer(opts: BootOptions = {}): Promise<void> {
     // eslint-disable-next-line no-console
     console.error('[shutdown] stdio client disconnected');
     server.close();
+    stopHeartbeat();
     await closeBrowser();
     await shutdownScanResources();
     process.exit(0);
