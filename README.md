@@ -388,6 +388,7 @@ roles where sponsorship is a non-issue — turn it off; the rest of the system w
 | `JOBOPS_SCHEDULER_ENABLED` | `false` | Whether opt-in cron runs at all |
 | `JOBOPS_LIVINGCV_URL` | _empty_ | LivingCV base URL (no default — set to your deployed LivingCV, e.g. `https://jobs.example.com`) |
 | `JOBOPS_LIVINGCV_TOKEN` | _empty_ | LivingCV **Master Relay** bearer key (Admin → Settings → MCP → `mcp.master_key`) |
+| `JOBOPS_LIVINGCV_TIMEOUT_MS` | `15000` | Timeout in milliseconds for both integrated HTTP and legacy SSE LivingCV synchronization |
 | `JOBOPS_HIREBRIDGE_URL` | `https://api.hirebridge.io` | HireBridge central router base URL for signal broadcast |
 | `JOBOPS_HIREBRIDGE_TOKEN` | _empty_ | Bearer token for HireBridge (set by `connect_to_hirebridge`) |
 | `JOBOPS_HIREBRIDGE_EMAIL` | _empty_ | Email associated with HireBridge connection |

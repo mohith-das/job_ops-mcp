@@ -320,13 +320,27 @@ export async function writeChatEditedPacket(
   return { id, version: result.version, bytes: content.length };
 }
 
-/** Write an approved, public-GitHub-derived packet as a new auditable version. */
-export async function writeGitHubEditedPacket(
-  content: string, notes: string,
+/**
+ * Atomically merge an approved GitHub change into the latest active packet.
+ *
+ * The callback runs while the DB write lock is held and receives the active
+ * packet content at that exact point in time. This prevents two approvals
+ * created from the same scan from replacing one another with stale full-packet
+ * snapshots.
+ */
+export async function writeGitHubMergedPacket(
+  merge: (latestContent: string) => string,
+  notes: string,
 ): Promise<{ id: string; version: number; bytes: number }> {
   const db = getDb();
   const id = randomUUID();
-  const result = await runInWriteLock(() => {
+  const replacePacket = db.transaction(() => {
+    const active = db.prepare(
+      `SELECT content FROM career_packet WHERE is_active = 1 ORDER BY version DESC LIMIT 1`,
+    ).get() as { content: string } | undefined;
+    if (!active) throw new Error('No active career packet.');
+
+    const content = merge(active.content);
     const lastV = (db.prepare(`SELECT COALESCE(MAX(version), 0) AS v FROM career_packet`).get() as any).v as number;
     const newV = lastV + 1;
     db.prepare(`UPDATE career_packet SET is_active = 0 WHERE is_active = 1`).run();
@@ -334,9 +348,10 @@ export async function writeGitHubEditedPacket(
       INSERT INTO career_packet (id, version, content, taglines, is_active, source_cv_hash, notes, origin)
       VALUES (?, ?, ?, NULL, 1, NULL, ?, 'github_sync')
     `).run(id, newV, content, notes);
-    return { version: newV };
+    return { version: newV, bytes: content.length };
   });
-  return { id, version: result.version, bytes: content.length };
+  const result = await runInWriteLock(() => replacePacket());
+  return { id, version: result.version, bytes: result.bytes };
 }
 
 // ── Sync-back (packet → source files) ─────────────────────────────────────────

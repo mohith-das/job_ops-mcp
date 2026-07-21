@@ -39,6 +39,53 @@ export interface SyncResult {
   fix?: string;
 }
 
+const DEFAULT_LIVINGCV_TIMEOUT_MS = 15_000;
+
+function livingCVTimeoutMs(): number {
+  const configured = Number(process.env.JOBOPS_LIVINGCV_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_LIVINGCV_TIMEOUT_MS;
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+  label: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  timer.unref?.();
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error: any) {
+    if (controller.signal.aborted) {
+      throw new Error(`${label} timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── URL + token resolution ────────────────────────────────────────────────────
 
 /**
@@ -129,15 +176,21 @@ export async function syncToLivingCV(
   let response: any;
   try {
     if (internalSecret) {
-      const result = await fetch(`${livingcvUrl}/api/internal/jobops-sync`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-jobops-sync-secret': internalSecret },
-        body: JSON.stringify({
-          packet: lcv,
-          approved_by_user: approval?.approvedByUser === true,
-          proposal_id: approval?.proposalId,
-        }),
-      });
+      const timeoutMs = livingCVTimeoutMs();
+      const result = await fetchWithTimeout(
+        `${livingcvUrl}/api/internal/jobops-sync`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-jobops-sync-secret': internalSecret },
+          body: JSON.stringify({
+            packet: lcv,
+            approved_by_user: approval?.approvedByUser === true,
+            proposal_id: approval?.proposalId,
+          }),
+        },
+        timeoutMs,
+        'LivingCV internal sync',
+      );
       const payload = await result.json().catch(() => ({}));
       if (!result.ok) throw new Error(`LivingCV internal sync returned ${result.status}: ${JSON.stringify(payload)}`);
       response = payload;
@@ -156,13 +209,18 @@ export async function syncToLivingCV(
       { name: 'jobops', version: '0.18.0' },
       { capabilities: {} },
     );
-    await client.connect(transport);
 
     try {
-      const result = await client.callTool({
-        name: 'sync_career_packet',
-        arguments: { packet: lcv },
-      });
+      const timeoutMs = livingCVTimeoutMs();
+      await withTimeout(client.connect(transport), timeoutMs, 'LivingCV connection');
+      const result = await withTimeout(
+        client.callTool({
+          name: 'sync_career_packet',
+          arguments: { packet: lcv },
+        }),
+        timeoutMs,
+        'LivingCV sync',
+      );
       // MCP tool results are wrapped: { content: [{type:'text', text:'...'}], ... }
       // Some servers also put structured payloads at the top level. Normalise.
       response = normalizeToolResult(result);
@@ -210,6 +268,9 @@ export async function syncToLivingCV(
  * Both surface as 401-ish refusals; the fix is to flip the right admin flag.
  */
 function describeLivingCVFailure(message: string): string | undefined {
+  if (/timed out|timeout/i.test(message)) {
+    return 'LivingCV did not respond in time. Confirm JOBOPS_LIVINGCV_URL is reachable, then retry; adjust JOBOPS_LIVINGCV_TIMEOUT_MS only if the server is intentionally slow.';
+  }
   if (/401|unauthor/i.test(message)) {
     return 'LivingCV rejected the bearer token. Check Admin → Settings → MCP → mcp.enabled = 1 and mcp.master_key matches JOBOPS_LIVINGCV_TOKEN.';
   }
@@ -222,7 +283,7 @@ function describeLivingCVFailure(message: string): string | undefined {
   if (/validation|invalid.packet|schema/i.test(message)) {
     return 'LivingCV rejected the packet shape. Open the LivingCV log for the exact zod error and file a jobops issue — the mapper should produce a valid packet.';
   }
-  return undefined;
+  return 'Confirm JOBOPS_LIVINGCV_URL is reachable and the LivingCV orchestrator is running, then retry the sync.';
 }
 
 /**

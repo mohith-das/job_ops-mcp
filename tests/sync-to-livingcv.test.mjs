@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 
 let sandbox;
 before(async () => {
@@ -138,6 +139,43 @@ test('integrated product sync forwards the unified user approval without an MCP 
   }
 });
 
+test('integrated product sync times out, aborts the request, and remains retryable', async () => {
+  const origToken = process.env.JOBOPS_LIVINGCV_TOKEN;
+  const origSecret = process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET;
+  const origUrl = process.env.JOBOPS_LIVINGCV_URL;
+  const origTimeout = process.env.JOBOPS_LIVINGCV_TIMEOUT_MS;
+  let connectionClosed = false;
+  const stalled = createServer((_req, res) => {
+    res.on('close', () => { connectionClosed = true; });
+    // Deliberately never complete the response.
+  });
+  await new Promise((resolve) => stalled.listen(0, '127.0.0.1', resolve));
+
+  delete process.env.JOBOPS_LIVINGCV_TOKEN;
+  process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET = 'service-provisioned-secret';
+  process.env.JOBOPS_LIVINGCV_URL = `http://127.0.0.1:${stalled.address().port}`;
+  process.env.JOBOPS_LIVINGCV_TIMEOUT_MS = '100';
+
+  try {
+    const { syncToLivingCV } = await import('../dist/core/livingcv_client.js');
+    const started = Date.now();
+    const result = await syncToLivingCV(minimalPacket());
+    assert.equal(result.ok, false);
+    assert.match(result.error, /LivingCV internal sync timed out after 100ms/);
+    assert.match(result.fix, /did not respond in time/i);
+    assert.ok(Date.now() - started < 2_000, 'timeout should return promptly');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(connectionClosed, true, 'AbortController should close the stalled HTTP request');
+  } finally {
+    stalled.closeAllConnections();
+    await new Promise((resolve) => stalled.close(resolve));
+    if (origToken === undefined) delete process.env.JOBOPS_LIVINGCV_TOKEN; else process.env.JOBOPS_LIVINGCV_TOKEN = origToken;
+    if (origSecret === undefined) delete process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET; else process.env.JOBOPS_LIVINGCV_INTERNAL_SECRET = origSecret;
+    if (origUrl === undefined) delete process.env.JOBOPS_LIVINGCV_URL; else process.env.JOBOPS_LIVINGCV_URL = origUrl;
+    if (origTimeout === undefined) delete process.env.JOBOPS_LIVINGCV_TIMEOUT_MS; else process.env.JOBOPS_LIVINGCV_TIMEOUT_MS = origTimeout;
+  }
+});
+
 test('syncToLivingCV returns error when LivingCV is unreachable', async () => {
   const origToken = process.env.JOBOPS_LIVINGCV_TOKEN;
   const origUrl   = process.env.JOBOPS_LIVINGCV_URL;
@@ -157,5 +195,35 @@ test('syncToLivingCV returns error when LivingCV is unreachable', async () => {
     else                          delete process.env.JOBOPS_LIVINGCV_TOKEN;
     if (origUrl   !== undefined) process.env.JOBOPS_LIVINGCV_URL = origUrl;
     else                          delete process.env.JOBOPS_LIVINGCV_URL;
+  }
+});
+
+test('syncToLivingCV times out and releases a stalled SSE connection', async () => {
+  const origToken = process.env.JOBOPS_LIVINGCV_TOKEN;
+  const origUrl = process.env.JOBOPS_LIVINGCV_URL;
+  const origTimeout = process.env.JOBOPS_LIVINGCV_TIMEOUT_MS;
+  const stalled = createServer((_req, _res) => {
+    // Deliberately never send the SSE response headers or endpoint event.
+  });
+  await new Promise((resolve) => stalled.listen(0, '127.0.0.1', resolve));
+
+  process.env.JOBOPS_LIVINGCV_TOKEN = 'test-token';
+  process.env.JOBOPS_LIVINGCV_URL = `http://127.0.0.1:${stalled.address().port}`;
+  process.env.JOBOPS_LIVINGCV_TIMEOUT_MS = '100';
+
+  try {
+    const { syncToLivingCV } = await import('../dist/core/livingcv_client.js');
+    const started = Date.now();
+    const result = await syncToLivingCV(minimalPacket());
+    assert.equal(result.ok, false);
+    assert.match(result.error, /LivingCV connection timed out after 100ms/);
+    assert.match(result.fix, /did not respond in time/i);
+    assert.ok(Date.now() - started < 2_000, 'timeout should return promptly');
+  } finally {
+    stalled.closeAllConnections();
+    await new Promise((resolve) => stalled.close(resolve));
+    if (origToken === undefined) delete process.env.JOBOPS_LIVINGCV_TOKEN; else process.env.JOBOPS_LIVINGCV_TOKEN = origToken;
+    if (origUrl === undefined) delete process.env.JOBOPS_LIVINGCV_URL; else process.env.JOBOPS_LIVINGCV_URL = origUrl;
+    if (origTimeout === undefined) delete process.env.JOBOPS_LIVINGCV_TIMEOUT_MS; else process.env.JOBOPS_LIVINGCV_TIMEOUT_MS = origTimeout;
   }
 });

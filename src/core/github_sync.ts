@@ -6,7 +6,7 @@ import {
   isPublicRepository, listPublicRepositories, type GithubEvidence, type PublicRepo,
 } from './github_client.js';
 import {
-  editPacketSection, getActiveCareerPacket, syncPacketToSourceFiles, writeGitHubEditedPacket,
+  editPacketSection, getActiveCareerPacket, syncPacketToSourceFiles, writeGitHubMergedPacket,
 } from './profile.js';
 import { compileCareerPacketJson } from './career_packet_json.js';
 import { syncToLivingCV } from './livingcv_client.js';
@@ -35,14 +35,28 @@ function sectionBody(content: string, section: number): string {
   return content.slice(start, next ? start + next.index : content.length).trim();
 }
 
-export function proposePacketContent(activeContent: string, repo: PublicRepo, evidence: GithubEvidence): string {
+function mergeProjectBullet(activeContent: string, repositoryUrl: string, bullet: string): string {
   const current = sectionBody(activeContent, 6);
-  const bullet = projectBullet(repo, evidence);
   const lines = current.split('\n').filter(Boolean);
-  const urlIndex = lines.findIndex(line => line.includes(evidence.repository_url));
+  const urlIndex = lines.findIndex(line => line.includes(repositoryUrl));
   if (urlIndex >= 0) lines[urlIndex] = bullet;
   else lines.push(bullet);
   return editPacketSection(activeContent, '6', lines.join('\n'));
+}
+
+export function proposePacketContent(activeContent: string, repo: PublicRepo, evidence: GithubEvidence): string {
+  return mergeProjectBullet(activeContent, evidence.repository_url, projectBullet(repo, evidence));
+}
+
+function editedProjectBullet(editedContent: string, repositoryUrl: string): string {
+  const line = sectionBody(editedContent, 6)
+    .split('\n')
+    .map(value => value.trim())
+    .find(value => value.includes(repositoryUrl));
+  if (!line) {
+    throw new Error('Edited proposal must retain the approved repository URL in the Projects section.');
+  }
+  return line;
 }
 
 export async function configureGithub(username: string): Promise<object> {
@@ -182,11 +196,28 @@ export async function reviewGithubProposal(id: string, action: 'approve' | 'reje
   const username = c?.github_username || config.githubUsername;
   const repo = (await listPublicRepositories(username)).find(r => r.id === proposal.github_repo_id);
   if (!repo || !isPublicRepository(repo)) throw new Error('Repository is no longer public; approval refused.');
+
+  const evidence = JSON.parse(proposal.evidence_json) as GithubEvidence;
+  const editedBullet = editedContent?.trim()
+    ? editedProjectBullet(editedContent, evidence.repository_url)
+    : null;
   const claimed = await runInWriteLock(() => getDb().prepare(`UPDATE github_cv_proposals SET status='edited' WHERE id=? AND status='pending'`).run(id));
   if (!claimed.changes) throw new Error('Proposal was already reviewed.');
 
-  const content = editedContent?.trim() || proposal.proposed_packet_content;
-  const packet = await writeGitHubEditedPacket(content, `GitHub proposal ${id}; ${proposal.source_url}; commit ${proposal.source_commit_sha}`);
+  let packet: Awaited<ReturnType<typeof writeGitHubMergedPacket>>;
+  try {
+    packet = await writeGitHubMergedPacket(
+      latestContent => editedBullet
+        ? mergeProjectBullet(latestContent, evidence.repository_url, editedBullet)
+        : proposePacketContent(latestContent, repo, evidence),
+      `GitHub proposal ${id}; ${proposal.source_url}; commit ${proposal.source_commit_sha}`,
+    );
+  } catch (error) {
+    await runInWriteLock(() => getDb().prepare(
+      `UPDATE github_cv_proposals SET status='pending' WHERE id=? AND status='edited'`,
+    ).run(id));
+    throw error;
+  }
   let cvSyncError: string | null = null;
   let livingcvSyncError: string | null = null;
   if (config.githubAutoSyncCv) {
